@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Race Dash — Events</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="top">
+    <h1>Race Dash</h1>
+    <div class="meta">Events</div>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>New event</h2>
+      <form id="new-event-form" class="row">
+        <input type="text" id="event-name" placeholder="Event name (e.g. Nota GP — Round 3)" required />
+        <input type="url" id="natsoft-url" placeholder="Natsoft event URL (or demo:// for synthetic data)" style="flex:1; min-width: 320px" />
+        <button type="submit" class="primary">Create</button>
+      </form>
+      <div class="muted" style="margin-top: 8px; font-size: 12px;">
+        Tip: paste the live timing URL of the specific session/event from racing.natsoft.com.au.
+        Use <code>demo://</code> for synthetic data while developing.
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Events</h2>
+      <ul id="events-list" class="events-list"></ul>
+      <div id="events-empty" class="muted" style="display:none">No events yet. Create one above.</div>
+    </section>
+  </main>
+
+  <script src="/static/config.js"></script>
+  <script src="/static/api.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+# Fly.io config for the backend (FastAPI + Playwright scraper).
+# Replace `app = "race-dash"` with whatever app name you create via `fly apps create`.
+#
+# Quickstart:
+#   1. fly auth login
+#   2. fly apps create race-dash          # pick a unique name
+#   3. fly volumes create racedash_data --size 1 --region <yourregion>     # only if using SQLite
+#   4. fly secrets set DATABASE_URL='postgresql+psycopg://USER:PASS@HOST/DB?sslmode=require'
+#                       ALLOWED_ORIGINS='https://<your-vercel-app>.vercel.app'
+#   5. fly deploy --dockerfile backend/Dockerfile
+
+app = "race-dash"
+primary_region = "syd"
+
+[build]
+  dockerfile = "backend/Dockerfile"
+
+[env]
+  PORT = "8000"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "off"   # the scraper is a long-running task; don't auto-stop
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"               # Chromium is hungry; bump to 2gb if you OOM
+
+# Uncomment if you choose SQLite + persistent volume instead of Postgres.
+# [mounts]
+#   source = "racedash_data"
+#   destination = "/data"

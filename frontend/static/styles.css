@@ -1,0 +1,318 @@
+:root {
+  --bg: #0f1115;
+  --panel: #181c23;
+  --panel-2: #1f242d;
+  --border: #2a3140;
+  --text: #e6e8ee;
+  --muted: #8b93a7;
+  --accent: #4f9dff;
+  --accent-2: #66d18a;
+  --warn: #f0b13e;
+  --bad: #ff6868;
+  --us: #ffd24a;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, system-ui, Segoe UI, Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.4;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+button, input, select {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+button { cursor: pointer; }
+button:hover { background: #2a3140; }
+button.primary { background: var(--accent); border-color: var(--accent); color: white; }
+button.primary:hover { background: #3d8aef; }
+button.danger { background: var(--bad); border-color: var(--bad); color: #2a0a0a; }
+button.danger:hover { background: #ff5454; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+input[type="text"], input[type="url"], select { min-width: 200px; }
+
+header.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+header.top h1 { margin: 0; font-size: 18px; }
+header.top .meta { color: var(--muted); font-size: 13px; }
+
+main { padding: 16px 20px; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.panel h2 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+.grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 1fr 1fr;
+}
+@media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+}
+th, td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+th { font-weight: 600; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+tr.us td { background: rgba(255, 210, 74, 0.08); }
+tr.deleted td { opacity: 0.4; text-decoration: line-through; }
+
+.tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.tag.live { background: rgba(102, 209, 138, 0.15); color: var(--accent-2); border-color: var(--accent-2); }
+.tag.idle { background: rgba(240, 177, 62, 0.10); color: var(--warn); border-color: var(--warn); }
+
+.muted { color: var(--muted); }
+.right { margin-left: auto; }
+.spacer { flex: 1; }
+
+.events-list { list-style: none; padding: 0; margin: 0; }
+.events-list li {
+  display: flex; gap: 10px; align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 8px;
+  background: var(--panel-2);
+}
+
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; }
+
+.chart-wrap { position: relative; height: 320px; }
+
+.lap-controls { display: flex; gap: 6px; align-items: center; }
+.lap-controls select { min-width: 120px; }
+
+/* --- Driver cards --- */
+
+.driver-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.driver-card[open] { background: #20262f; }
+.driver-card summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.driver-card summary::-webkit-details-marker { display: none; }
+.driver-card summary:hover { background: rgba(255,255,255,0.03); }
+
+.driver-swatch {
+  width: 18px; height: 18px;
+  border-radius: 4px;
+  border: 1px solid #00000080;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.driver-name {
+  font-weight: 600;
+  min-width: 120px;
+}
+.driver-name input {
+  font-weight: 600;
+  padding: 2px 6px;
+  width: 160px;
+}
+
+.driver-stat { color: var(--muted); font-size: 12px; }
+.driver-stat strong { color: var(--text); font-variant-numeric: tabular-nums; }
+
+.driver-actions { display: flex; gap: 6px; margin-left: auto; }
+.driver-actions button {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.driver-card .body {
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--border);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+@media (max-width: 900px) {
+  .driver-card .body { grid-template-columns: 1fr; }
+}
+.driver-card .body table { font-size: 13px; }
+.driver-card .body th, .driver-card .body td { padding: 4px 6px; }
+
+.driver-mini-chart-wrap { position: relative; height: 220px; }
+
+/* --- Lap-table colour chip --- */
+
+.lap-color-chip {
+  display: inline-block;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  vertical-align: middle;
+  border: 1px solid #00000080;
+}
+
+.icon-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+  font-size: 12px;
+  border-radius: 4px;
+  color: var(--muted);
+}
+.icon-btn:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+
+/* --- Tracked cars panel --- */
+
+.tracked-slot {
+  display: grid;
+  grid-template-columns: max-content 1fr max-content 1fr max-content;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  margin-bottom: 6px;
+}
+@media (max-width: 800px) { .tracked-slot { grid-template-columns: 1fr; } }
+.tracked-slot label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+.tracked-slot.empty { background: transparent; border-style: dashed; }
+
+/* --- Driver-card top-5 chips + fastest highlight --- */
+
+.driver-card.fastest {
+  border: 2px solid var(--us);
+  box-shadow: 0 0 0 2px rgba(255, 210, 74, 0.15);
+}
+
+.top5-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex-basis: 100%;
+}
+.top5-chip {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+.top5-chip .rank {
+  color: var(--muted);
+  margin-right: 4px;
+}
+.top5-chip.rank-1 { border-color: var(--us); color: var(--us); }
+
+/* --- Colour palette popover --- */
+
+.color-palette {
+  position: absolute;
+  z-index: 1000;
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.3);
+}
+.color-palette button {
+  width: 24px; height: 24px;
+  padding: 0;
+  border: 1px solid #00000080;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.color-palette button:focus { outline: 2px solid var(--accent); }
+
+/* --- Tyre stint + lap note + fast lap --- */
+
+.stint-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.stint-badge.s1 { background: rgba(102, 209, 138, 0.10); color: var(--accent-2); border-color: var(--accent-2); }
+.stint-badge.s2 { background: rgba(79, 157, 255, 0.12);  color: var(--accent);    border-color: var(--accent);   }
+.stint-badge.s3 { background: rgba(240, 177, 62, 0.12);  color: var(--warn);      border-color: var(--warn);     }
+.stint-badge.s4 { background: rgba(182, 131, 255, 0.12); color: #b683ff;          border-color: #b683ff;         }
+.stint-badge.s5 { background: rgba(94, 208, 208, 0.12);  color: #5ed0d0;          border-color: #5ed0d0;         }
+
+.lap-note-input {
+  width: 100%;
+  min-width: 140px;
+  font-size: 12px;
+  padding: 4px 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+}
+.lap-note-input:focus { border-color: var(--accent); outline: none; }
+.lap-note-input.saving { border-color: var(--warn); }
+.lap-note-input.saved  { border-color: var(--accent-2); }
+
+tr.fast td { background: rgba(255, 80, 80, 0.14) !important; }
+tr.us.fast td { background: rgba(255, 100, 80, 0.20) !important; }

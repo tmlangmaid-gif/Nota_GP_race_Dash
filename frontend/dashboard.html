@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Race Dash — Dashboard</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="/static/styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="top">
+    <div class="row">
+      <a href="/">←</a>
+      <h1 id="event-name">…</h1>
+      <span id="status-tag" class="tag idle">idle</span>
+    </div>
+    <div class="row">
+      <button id="track-btn" class="primary">Start tracking</button>
+    </div>
+  </header>
+
+  <main>
+
+    <section class="panel">
+      <h2>Our cars</h2>
+      <div class="muted" style="font-size:12px; margin-bottom:8px">
+        Select up to two of your cars and the driver currently in each car.
+        New laps will be auto-tagged with that driver until you change it.
+      </div>
+      <div id="tracked-cars"></div>
+
+      <div class="row" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border);">
+        <label>Add driver</label>
+        <input type="text" id="new-driver" placeholder="Driver name" />
+        <button id="add-driver-btn">Add</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Drivers</h2>
+      <div id="drivers-cards"></div>
+      <div id="drivers-empty" class="muted" style="display:none">
+        No drivers yet. Add one above. Each driver tracks the laps you allocate to them.
+      </div>
+    </section>
+
+    <div class="grid">
+      <section class="panel">
+        <h2>All drivers — lap times</h2>
+        <div class="muted" style="font-size:12px; margin-bottom:6px">
+          One line per driver. X axis is the car's lap number — drivers don't overlap, so each driver's line spans the laps they drove.
+        </div>
+        <div class="chart-wrap"><canvas id="chart-all-drivers"></canvas></div>
+      </section>
+
+      <section class="panel">
+        <h2>All cars — lap times over the day</h2>
+        <div class="row" style="margin-bottom:6px">
+          <span class="muted" style="font-size:12px">Show</span>
+          <select id="all-cars-filter">
+            <option value="tracked" selected>Tracked cars only</option>
+            <option value="top5">Tracked + top 5 competitors</option>
+            <option value="all">All cars</option>
+          </select>
+          <span class="muted" style="font-size:12px">Tracked cars are bolded; tap legend entries to toggle.</span>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-all-cars"></canvas></div>
+      </section>
+    </div>
+
+    <section class="panel">
+      <h2>Position over the day</h2>
+      <div class="muted" style="font-size:12px; margin-bottom:6px">
+        Position 1 is at the top. Tracked-car lines change colour where the driver changed.
+      </div>
+      <div class="chart-wrap" style="height: 280px"><canvas id="chart-position"></canvas></div>
+    </section>
+
+    <section id="our-cars-laps"></section>
+
+    <section class="panel">
+      <h2>Leaderboard</h2>
+      <table id="leaderboard">
+        <thead>
+          <tr>
+            <th>#</th><th>Car</th><th>Laps</th><th>Best</th><th>Last</th><th>Avg</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+  </main>
+
+  <!-- Colour-palette popover (positioned next to the swatch when shown) -->
+  <div id="color-palette" class="color-palette" style="display:none"></div>
+
+  <script src="/static/config.js"></script>
+  <script src="/static/api.js"></script>
+  <script src="/static/dashboard.js"></script>
+</body>
+</html>
