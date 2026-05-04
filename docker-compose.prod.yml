@@ -1,0 +1,49 @@
+# Production compose for the Hostinger VPS.
+# Sits behind the existing Traefik reverse proxy (cert resolver: letsencrypt,
+# websecure entrypoint, HTTP→HTTPS auto-redirect).
+#
+# Required env (set in .env next to this file — see .env.example):
+#   POSTGRES_PASSWORD  strong random password for the Postgres user
+#   RACEDASH_HOST      hostname Traefik should route to this backend (must DNS to this VPS)
+#   ALLOWED_ORIGINS    comma-separated list of frontend origins (e.g. https://yourapp.vercel.app)
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: racedash-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: racedash
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: racedash
+    volumes:
+      - racedash-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U racedash -d racedash"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: racedash-backend:latest
+    container_name: racedash-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://racedash:${POSTGRES_PASSWORD}@db:5432/racedash
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
+      PORT: "8000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.racedash.rule=Host(`${RACEDASH_HOST:?RACEDASH_HOST is required}`)"
+      - "traefik.http.routers.racedash.entrypoints=websecure"
+      - "traefik.http.routers.racedash.tls.certresolver=letsencrypt"
+      - "traefik.http.services.racedash.loadbalancer.server.port=8000"
+
+volumes:
+  racedash-db:

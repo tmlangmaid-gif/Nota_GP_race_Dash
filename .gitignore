@@ -7,6 +7,8 @@ env/
 .env.*
 !.env.example
 
+docker-compose.override.yml
+
 *.db
 *.db-journal
 *.db-wal
