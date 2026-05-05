@@ -505,7 +505,7 @@ function renderSlotLapsHTML(tc) {
       <tr class="us ${isFast ? "fast" : ""}">
         <td><span class="lap-color-chip" style="background:${chipColor}; border-color:${chipBorder}"></span></td>
         <td>${lap.lap_number}</td>
-        <td>${fmtLapMs(lap.lap_time_ms)}</td>
+        <td class="lap-time-cell">${fmtLapMs(lap.lap_time_ms)}</td>
         <td><span class="stint-badge ${stintClass}" title="tyre stint">S${stint}</span></td>
         <td>${pickerHTML(lap, driver)}</td>
         <td>
@@ -854,7 +854,7 @@ function renderAllLapsFeed() {
         <td>${fmtTimeOfDay(tsMs(l))}</td>
         <td><strong>#${escapeHtml(l.vehicle_number)}</strong></td>
         <td>${l.lap_number}</td>
-        <td>${fmtLapMs(l.lap_time_ms)}</td>
+        <td class="lap-time-cell">${fmtLapMs(l.lap_time_ms)}</td>
         <td>${l.position ?? "—"}</td>
       </tr>`;
   }).join("");
