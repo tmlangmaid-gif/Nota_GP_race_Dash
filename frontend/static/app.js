@@ -59,15 +59,18 @@ document.addEventListener("submit", async (e) => {
 
 document.addEventListener("click", async (e) => {
   // Open Natsoft in a popup window (saves the user finding the URL).
+  // Note: Natsoft's HTTPS cert is broken — only HTTP works. Modern browsers
+  // are fine opening an HTTP popup from an HTTPS page (no mixed-content rule
+  // applies to top-level navigations).
   if (e.target.id === "browse-natsoft-btn") {
     e.preventDefault();
     const popup = window.open(
-      "https://racing.natsoft.com.au/results/",
+      "http://racing.natsoft.com.au/results/",
       "natsoft",
       "width=1100,height=820,resizable=yes,scrollbars=yes,toolbar=yes,location=yes"
     );
     if (!popup) {
-      alert("Your browser blocked the popup. Allow popups for this site, or open https://racing.natsoft.com.au/results/ manually.");
+      alert("Your browser blocked the popup. Allow popups for this site, or open http://racing.natsoft.com.au/results/ manually in a new tab.");
     } else {
       popup.focus();
     }
