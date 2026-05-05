@@ -40,6 +40,9 @@ def _post_to_resend(payload: dict) -> dict:
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
+            # Cloudflare in front of Resend blocks the default Python-urllib UA
+            # with a generic "error code: 1010". A real-looking UA passes through.
+            "User-Agent": "RaceDash/1.0 (+racedash.srv1595222.hstgr.cloud)",
         },
         method="POST",
     )
