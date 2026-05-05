@@ -227,7 +227,7 @@ function renderCarDriversHTML(tc) {
       d,
       total: dlaps.length,
       best: times.length ? Math.min(...times) : null,
-      top3: [...dlaps].sort((a, b) => a.lap_time_ms - b.lap_time_ms).slice(0, 3),
+      topChips: [...dlaps].sort((a, b) => a.lap_time_ms - b.lap_time_ms).slice(0, 5),
     };
   }).sort((a, b) => {
     if (a.best == null && b.best == null) return a.d.name.localeCompare(b.d.name);
@@ -240,16 +240,15 @@ function renderCarDriversHTML(tc) {
 
   const cardsHTML = decorated.length === 0
     ? `<div class="muted" style="font-size:12px;">No drivers on this car yet. Add one below.</div>`
-    : decorated.map(({ d, total, best, top3 }) => {
+    : decorated.map(({ d, total, best, topChips }) => {
         const color = driverColor(d);
         const isOpen = expandedDrivers.has(d.id);
         const isEditing = editingDriverId === d.id;
         const isFastest = d.id === fastestId;
-        const top5 = [...laps.filter((l) => l.driver_id === d.id && !l.is_deleted)]
-          .sort((a, b) => a.lap_time_ms - b.lap_time_ms).slice(0, 5);
-        const topChips = top3.length === 0
+        const top5 = topChips;
+        const topChipsHTML = topChips.length === 0
           ? `<span class="muted" style="font-size:12px">no laps yet</span>`
-          : top3.map((l, i) => `
+          : topChips.map((l, i) => `
               <span class="top5-chip rank-${i + 1}" title="lap #${l.lap_number}">
                 <span class="rank">${i + 1}</span>${fmtLapMs(l.lap_time_ms)}
               </span>`).join("");
@@ -272,7 +271,7 @@ function renderCarDriversHTML(tc) {
                   : `<button class="icon-btn" data-act="rename" data-driver="${d.id}">Rename</button>`}
                 <button class="icon-btn" data-act="delete-driver" data-driver="${d.id}">×</button>
               </span>
-              <div class="top5-strip">${topChips}</div>
+              <div class="top5-strip">${topChipsHTML}</div>
             </summary>
             <div class="body">
               <div>
