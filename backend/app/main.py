@@ -50,7 +50,8 @@ async def lifespan(app: FastAPI):
     ensure_column("drivers", "vehicle_number", "VARCHAR(20)")
     ensure_column("events", "user_id", "INTEGER")
     ensure_column("events", "min_lap_warning_ms", "INTEGER NOT NULL DEFAULT 72000")
-    ensure_column("events", "is_public", "BOOLEAN NOT NULL DEFAULT 0")
+    # FALSE (not 0) — Postgres requires a boolean literal here; SQLite accepts both.
+    ensure_column("events", "is_public", "BOOLEAN NOT NULL DEFAULT FALSE")
     ensure_column("event_members", "role", "VARCHAR(10) NOT NULL DEFAULT 'read'")
     # On startup, no scraper task is running yet — clear any leftover
     # is_tracking=true rows so the UI doesn't lie.
