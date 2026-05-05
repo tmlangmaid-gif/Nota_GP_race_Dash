@@ -1,0 +1,37 @@
+name: Deploy backend to VPS
+
+# Triggers:
+#   - Any push to main that changes backend code, the prod compose, or this workflow itself.
+#   - Manual run from the Actions tab (workflow_dispatch).
+#
+# Frontend changes are deployed automatically by Vercel — they don't need this workflow.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'docker-compose.prod.yml'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH into VPS and redeploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          # Use a strict-fail script: any non-zero exit aborts the deploy.
+          script: |
+            set -e
+            cd /opt/racedash
+            echo "▶ git pull"
+            git pull --ff-only
+            echo "▶ docker compose up -d --build"
+            docker compose -f docker-compose.prod.yml up -d --build
+            echo "▶ container state"
+            docker compose -f docker-compose.prod.yml ps
