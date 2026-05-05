@@ -941,6 +941,10 @@ if FRONTEND_DIR.exists():
     def competitors_page():
         return FileResponse(FRONTEND_DIR / "competitors.html")
 
+    @app.get("/compressed")
+    def compressed_page():
+        return FileResponse(FRONTEND_DIR / "compressed.html")
+
     @app.get("/forgot-password")
     def forgot_password_page():
         return FileResponse(FRONTEND_DIR / "forgot-password.html")

@@ -1530,9 +1530,11 @@ document.addEventListener("change", async (e) => {
 (async () => {
   currentUser = await Auth.requireAuth();
   await renderUserBar(currentUser);
-  // Wire the Competitors link to the same event id.
+  // Wire the Competitors and Quick view links to the same event id.
   const compLink = document.getElementById("competitors-link");
   if (compLink) compLink.href = `/competitors?event=${EVENT_ID}`;
+  const quickLink = document.getElementById("compressed-link");
+  if (quickLink) quickLink.href = `/compressed?event=${EVENT_ID}`;
   try {
     await loadAll();
   } catch (err) {

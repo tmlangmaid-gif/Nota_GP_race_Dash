@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Race Dash — Quick view</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="/static/styles.css" />
+  <style>
+    /* Compressed view-only tweaks: bigger numbers, dense rows. */
+    .compressed-driver {
+      display: grid;
+      grid-template-columns: max-content max-content 1fr;
+      align-items: center;
+      gap: 10px 14px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .compressed-driver:last-child { border-bottom: none; }
+    .compressed-driver .name {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 16px;
+      min-width: 140px;
+    }
+    .compressed-driver .name .dot {
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      border: 1px solid #00000080;
+      flex: 0 0 auto;
+    }
+    .compressed-driver .stats {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .compressed-driver .stats strong {
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+    .compressed-driver .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      justify-content: flex-end;
+    }
+    @media (max-width: 720px) {
+      .compressed-driver { grid-template-columns: 1fr; }
+      .compressed-driver .chips { justify-content: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="row">
+      <a id="back-link">←</a>
+      <h1 id="event-name">…</h1>
+      <span class="tag">quick view</span>
+    </div>
+    <div class="row">
+      <span style="color: var(--border); margin: 0 4px;">|</span>
+      <span id="user-bar" class="row" style="gap: 8px;"></span>
+    </div>
+  </header>
+
+  <main>
+    <div id="cars"></div>
+    <div id="empty" class="muted" style="display:none; padding: 12px;">
+      No cars or drivers yet. Set up the event from the main dashboard first.
+    </div>
+  </main>
+
+  <script src="/static/config.js"></script>
+  <script src="/static/auth.js"></script>
+  <script src="/static/api.js"></script>
+  <script src="/static/header-bar.js"></script>
+  <script src="/static/compressed.js"></script>
+</body>
+</html>
