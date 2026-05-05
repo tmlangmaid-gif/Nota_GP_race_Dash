@@ -13,34 +13,31 @@
       <a href="/">←</a>
       <h1 id="event-name">…</h1>
       <span id="status-tag" class="tag idle">idle</span>
+      <span id="role-badge" class="tag" style="display:none"></span>
     </div>
     <div class="row">
+      <a id="competitors-link"><button class="icon-btn">Competitors</button></a>
       <button id="track-btn" class="primary">Start tracking</button>
+      <button id="event-settings-btn" class="icon-btn">Event settings</button>
+      <span style="color: var(--border); margin: 0 4px;">|</span>
+      <span id="user-bar" class="row" style="gap: 8px;"></span>
     </div>
   </header>
 
   <main>
 
-    <section class="panel">
-      <h2>Our cars</h2>
-      <div class="muted" style="font-size:12px; margin-bottom:8px">
-        Select up to two of your cars and the driver currently in each car.
-        New laps will be auto-tagged with that driver until you change it.
+    <section>
+      <div class="row" style="justify-content: space-between; align-items: baseline; padding: 0 4px;">
+        <h2 style="margin:0; font-size:14px; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted)">Our cars</h2>
+        <div class="lap-tables-toggle" id="cars-view-toggle">
+          <button data-view="1">Car 1</button>
+          <button data-view="2">Car 2</button>
+          <button data-view="both" class="active">Both</button>
+        </div>
       </div>
-      <div id="tracked-cars"></div>
-
-      <div class="row" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border);">
-        <label>Add driver</label>
-        <input type="text" id="new-driver" placeholder="Driver name" />
-        <button id="add-driver-btn">Add</button>
-      </div>
-    </section>
-
-    <section class="panel">
-      <h2>Drivers</h2>
-      <div id="drivers-cards"></div>
-      <div id="drivers-empty" class="muted" style="display:none">
-        No drivers yet. Add one above. Each driver tracks the laps you allocate to them.
+      <div class="lap-tables-grid" id="cars-grid">
+        <div class="car-col" data-slot="1" id="car-col-1"></div>
+        <div class="car-col" data-slot="2" id="car-col-2"></div>
       </div>
     </section>
 
@@ -76,7 +73,20 @@
       <div class="chart-wrap" style="height: 280px"><canvas id="chart-position"></canvas></div>
     </section>
 
-    <section id="our-cars-laps"></section>
+    <section class="panel">
+      <h2>All laps — live feed</h2>
+      <div class="muted" style="font-size:12px; margin-bottom:6px">
+        Most recent laps from every car, newest first. Tracked cars highlighted.
+      </div>
+      <div id="all-laps-feed-wrap" style="max-height: 380px; overflow:auto">
+        <table id="all-laps-feed">
+          <thead>
+            <tr><th>Time</th><th>Car</th><th>Lap</th><th>Lap time</th><th>Pos</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
 
     <section class="panel">
       <h2>Leaderboard</h2>
@@ -95,8 +105,82 @@
   <!-- Colour-palette popover (positioned next to the swatch when shown) -->
   <div id="color-palette" class="color-palette" style="display:none"></div>
 
+  <!-- Event settings modal (hidden by default; opened by the button in the header) -->
+  <div id="event-settings-modal" class="modal-backdrop" style="display:none">
+    <div class="modal">
+      <div class="row" style="justify-content: space-between; align-items: baseline; margin-bottom: 10px;">
+        <h2 style="margin:0;">Event settings</h2>
+        <button class="icon-btn" data-act="close-event-settings">×</button>
+      </div>
+
+      <div class="panel" style="background:var(--panel-2)">
+        <h2>Event name</h2>
+        <div class="row">
+          <input type="text" id="event-name-input" style="flex:1" />
+          <button id="save-event-name" class="primary">Save</button>
+        </div>
+      </div>
+
+      <div class="panel" style="background:var(--panel-2)">
+        <h2>Visibility</h2>
+        <div class="muted" style="font-size:12px; margin-bottom:6px">
+          Private events are only visible to you and people you've explicitly invited.
+          Public events are visible (read-only) to anyone with a Race Dash account.
+          You stay the owner either way.
+        </div>
+        <div class="row">
+          <label class="row" style="gap:8px; cursor: pointer;">
+            <input type="checkbox" id="public-toggle" />
+            <span>Make this event public</span>
+          </label>
+          <span id="public-msg" class="muted" style="font-size:12px;"></span>
+        </div>
+      </div>
+
+      <div class="panel" style="background:var(--panel-2)">
+        <h2>Minimum lap time warning</h2>
+        <div class="muted" style="font-size:12px; margin-bottom:6px">
+          Laps faster than this will be highlighted red — useful for flagging suspicious times.
+          Default 1:12.000. Accepts <code>M:SS.mmm</code> or just seconds (e.g. <code>72</code> or <code>72.5</code>).
+        </div>
+        <div class="row">
+          <input type="text" id="min-lap-input" placeholder="1:12.000" style="flex:0 0 180px" />
+          <button id="save-min-lap" class="primary">Save</button>
+          <span id="min-lap-msg" class="muted" style="font-size:12px;"></span>
+        </div>
+      </div>
+
+      <div class="panel" style="background:var(--panel-2)" id="members-panel">
+        <h2>Shared with</h2>
+        <div class="muted" style="font-size:12px; margin-bottom:6px;">
+          Invite people by email to read or edit this event. They need to have signed up first.
+        </div>
+        <div id="members-list"></div>
+        <div id="members-empty" class="muted" style="display:none">
+          No one else has access yet — only you can see this event.
+        </div>
+        <div id="members-add-row" class="row" style="margin-top: 10px; padding-top:10px; border-top: 1px solid var(--border);">
+          <input type="email" id="member-email" placeholder="someone@example.com" style="flex:1" />
+          <select id="member-role">
+            <option value="read">Read only</option>
+            <option value="write">Can edit</option>
+          </select>
+          <button id="add-member-btn" class="primary">Add</button>
+        </div>
+      </div>
+
+      <div class="panel" style="background:var(--panel-2)" id="danger-panel">
+        <h2 style="color: var(--bad);">Danger zone</h2>
+        <button class="danger" id="delete-event-btn">Delete this event</button>
+        <span class="muted" style="margin-left:10px; font-size:12px;">Removes all laps, drivers, and members.</span>
+      </div>
+    </div>
+  </div>
+
   <script src="/static/config.js"></script>
+  <script src="/static/auth.js"></script>
   <script src="/static/api.js"></script>
+  <script src="/static/header-bar.js"></script>
   <script src="/static/dashboard.js"></script>
 </body>
 </html>

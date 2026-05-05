@@ -26,11 +26,15 @@ let drivers = [];
 let vehicles = [];
 let laps = [];
 let trackedCars = [];   // [{id, slot, vehicle_number, current_driver_id}]
+let currentUser = null;
+let members = [];        // [{id, user_id, email, role}], owner-only for now
+let carsView = "both";   // "1" | "2" | "both" — which car-column(s) to show
 let chartAllDrivers = null;
 let chartAllCars = null;
 let chartPosition = null;
 let allCarsFilter = "tracked";
 const driverMiniCharts = new Map();
+const carLapChartsBySlot = new Map();   // slot (1|2) -> Chart instance for that car's lap-time history
 const expandedDrivers = new Set();
 let editingDriverId = null;
 
@@ -107,72 +111,423 @@ function renderHeader() {
     tag.textContent = "idle";
   }
   $("#track-btn").textContent = event_.is_tracking ? "Stop tracking" : "Start tracking";
+
+  // Role badge — only show for non-owners.
+  const roleBadge = $("#role-badge");
+  if (event_.role && event_.role !== "owner") {
+    roleBadge.textContent = event_.role;
+    roleBadge.style.display = "";
+  } else {
+    roleBadge.style.display = "none";
+  }
+
+  // Read-only members can't tap Start tracking.
+  const canWrite = event_.role !== "read";
+  $("#track-btn").disabled = !canWrite;
+
+  // Only the owner gets the Event settings button.
+  $("#event-settings-btn").style.display = (event_.role === "owner") ? "" : "none";
 }
 
 // ---------------------------------------------------------------------------
-// Tracked cars panel
+// Per-car columns: each column contains its slot config + laps table.
 // ---------------------------------------------------------------------------
 
-function trackedSlotHTML(slot, tc) {
+function renderCarColumns() {
+  // Tear down driver mini charts and per-car laps charts BEFORE swapping HTML —
+  // their canvases are about to be detached, and Chart.js would otherwise
+  // render into ghost nodes.
+  for (const [, chart] of driverMiniCharts) chart.destroy();
+  driverMiniCharts.clear();
+  for (const [, chart] of carLapChartsBySlot) chart.destroy();
+  carLapChartsBySlot.clear();
+
+  const bySlot = new Map(trackedCars.map((t) => [t.slot, t]));
+  for (let s = 1; s <= MAX_TRACKED_SLOTS; s++) {
+    const target = document.getElementById(`car-col-${s}`);
+    if (!target) continue;
+    const tc = bySlot.get(s) || null;
+
+    // Preserve scroll position of the laps table across innerHTML swap.
+    const oldScroll = document.getElementById(`laps-scroll-${s}`);
+    const savedScroll = oldScroll ? oldScroll.scrollTop : 0;
+
+    target.innerHTML =
+      renderColumnHeaderHTML(s, tc)
+      + renderSlotCardHTML(s, tc)
+      + (tc ? renderCarDriversHTML(tc) : "")
+      + (tc ? renderCarLapChartHTML(tc) : "")
+      + (tc ? renderSlotLapsHTML(tc) : "");
+
+    if (savedScroll > 0) {
+      const newScroll = document.getElementById(`laps-scroll-${s}`);
+      if (newScroll) newScroll.scrollTop = savedScroll;
+    }
+
+    // Draw the per-car laps chart now that the canvas is in the DOM.
+    if (tc) drawCarLapChart(s, tc);
+  }
+  // Re-draw mini charts for any expanded driver cards (now in the new DOM).
+  for (const id of expandedDrivers) {
+    const driver = drivers.find((d) => d.id === id);
+    if (driver) drawDriverMiniChart(driver);
+  }
+  // Apply the view-toggle classes so we hide the right column(s).
+  const grid = document.getElementById("cars-grid");
+  if (grid) {
+    grid.classList.toggle("single", carsView !== "both");
+    grid.classList.toggle("hide-1", carsView === "2");
+    grid.classList.toggle("hide-2", carsView === "1");
+  }
+  // Active state on the toggle buttons.
+  document.querySelectorAll("#cars-view-toggle button").forEach((b) => {
+    b.classList.toggle("active", b.dataset.view === carsView);
+  });
+}
+
+function renderColumnHeaderHTML(slot, tc) {
+  // Big header sitting above each column so left/right unmistakably == Slot 1/Slot 2.
+  if (!tc) {
+    return `
+      <div class="car-col-header empty">
+        <div class="slot-label">SLOT ${slot}</div>
+        <div class="muted" style="font-size:12px;">no car selected</div>
+      </div>`;
+  }
+  const desc = tc.description ? escapeHtml(tc.description) : "";
+  // Show the user-given name prominently (e.g. "BMW") with the car number as
+  // a subtle annotation. Falls back to "Car #N" when there's no name.
+  const titleHTML = tc.name
+    ? `<div class="car-title">${escapeHtml(tc.name)} <span class="car-num-badge">#${escapeHtml(tc.vehicle_number)}</span></div>`
+    : `<div class="car-title">Car #${escapeHtml(tc.vehicle_number)}</div>`;
+  return `
+    <div class="car-col-header">
+      <div class="slot-label">SLOT ${slot}</div>
+      ${titleHTML}
+      ${desc ? `<div class="car-desc">${desc}</div>` : ""}
+    </div>`;
+}
+
+function renderCarDriversHTML(tc) {
+  // Per-car drivers panel: every driver rostered to this car (Driver.vehicle_number
+  // matches), with their per-car stats. Includes its own "Add driver" form so
+  // the form lives in the same column as the car the driver belongs to.
+  const carDrivers = drivers.filter((d) => d.vehicle_number === tc.vehicle_number);
+
+  // Build per-driver stats (total, best, top 3) over this car's laps only.
+  const carLaps = laps.filter((l) => l.vehicle_number === tc.vehicle_number && !l.is_deleted);
+  const lapsByDriver = {};
+  for (const l of carLaps) {
+    if (l.driver_id != null) (lapsByDriver[l.driver_id] ||= []).push(l);
+  }
+  const decorated = carDrivers.map((d) => {
+    const dlaps = lapsByDriver[d.id] || [];
+    const times = dlaps.map((l) => l.lap_time_ms);
+    return {
+      d,
+      total: dlaps.length,
+      best: times.length ? Math.min(...times) : null,
+      top3: [...dlaps].sort((a, b) => a.lap_time_ms - b.lap_time_ms).slice(0, 3),
+    };
+  }).sort((a, b) => {
+    if (a.best == null && b.best == null) return a.d.name.localeCompare(b.d.name);
+    if (a.best == null) return 1;
+    if (b.best == null) return -1;
+    return a.best - b.best;
+  });
+
+  const fastestId = decorated.find((x) => x.best != null)?.d.id ?? null;
+
+  const cardsHTML = decorated.length === 0
+    ? `<div class="muted" style="font-size:12px;">No drivers on this car yet. Add one below.</div>`
+    : decorated.map(({ d, total, best, top3 }) => {
+        const color = driverColor(d);
+        const isOpen = expandedDrivers.has(d.id);
+        const isEditing = editingDriverId === d.id;
+        const isFastest = d.id === fastestId;
+        const top5 = [...laps.filter((l) => l.driver_id === d.id && !l.is_deleted)]
+          .sort((a, b) => a.lap_time_ms - b.lap_time_ms).slice(0, 5);
+        const topChips = top3.length === 0
+          ? `<span class="muted" style="font-size:12px">no laps yet</span>`
+          : top3.map((l, i) => `
+              <span class="top5-chip rank-${i + 1}" title="lap #${l.lap_number}">
+                <span class="rank">${i + 1}</span>${fmtLapMs(l.lap_time_ms)}
+              </span>`).join("");
+        return `
+          <details class="driver-card ${isFastest ? "fastest" : ""}" data-driver="${d.id}" ${isOpen ? "open" : ""}>
+            <summary>
+              <span class="driver-swatch" data-act="pick-color" data-driver="${d.id}"
+                    style="background:${color}" title="Click to change colour"></span>
+              <span class="driver-name">
+                ${isEditing
+                  ? `<input type="text" data-act="rename-input" data-driver="${d.id}" value="${escapeHtml(d.name)}" />`
+                  : escapeHtml(d.name)}
+              </span>
+              <span class="driver-stat">total laps <strong style="font-size:14px; color: var(--text);">${total}</strong></span>
+              <span class="driver-stat">best <strong>${fmtLapMs(best)}</strong></span>
+              <span class="driver-actions">
+                ${isEditing
+                  ? `<button data-act="rename-save" data-driver="${d.id}" class="primary">Save</button>
+                     <button data-act="rename-cancel" data-driver="${d.id}">Cancel</button>`
+                  : `<button class="icon-btn" data-act="rename" data-driver="${d.id}">Rename</button>`}
+                <button class="icon-btn" data-act="delete-driver" data-driver="${d.id}">×</button>
+              </span>
+              <div class="top5-strip">${topChips}</div>
+            </summary>
+            <div class="body">
+              <div>
+                <h3 style="margin:0 0 6px; font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em;">
+                  All laps (${top5.length === 5 ? "best 5 shown — see laps table for full list" : "top 5"})
+                </h3>
+                ${top5.length === 0
+                  ? `<div class="muted">No laps assigned to this driver yet.</div>`
+                  : `<table>
+                       <thead><tr><th>#</th><th>Lap</th><th>Time</th></tr></thead>
+                       <tbody>
+                         ${top5.map((l, i) => `<tr><td>${i + 1}</td><td>${l.lap_number}</td><td>${fmtLapMs(l.lap_time_ms)}</td></tr>`).join("")}
+                       </tbody>
+                     </table>`}
+              </div>
+              <div>
+                <h3 style="margin:0 0 6px; font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em;">
+                  Lap-time history
+                </h3>
+                <div class="driver-mini-chart-wrap">
+                  <canvas id="driver-mini-${d.id}"></canvas>
+                </div>
+              </div>
+            </div>
+          </details>`;
+      }).join("");
+
+  return `
+    <section class="panel">
+      <h3>Drivers</h3>
+      <div class="row" style="margin-bottom: 10px;">
+        <input type="text" class="new-car-driver-input" data-tracked="${tc.id}" placeholder="Driver name" style="flex: 1;" />
+        <button class="primary" data-act="add-car-driver" data-tracked="${tc.id}">Add</button>
+      </div>
+      ${cardsHTML}
+    </section>`;
+}
+
+function renderSlotCardHTML(slot, tc) {
   const vehicleOpts = ['<option value="">— pick a car —</option>']
     .concat(vehicles.map((v) =>
       `<option value="${escapeHtml(v)}" ${tc && v === tc.vehicle_number ? "selected" : ""}>#${escapeHtml(v)}</option>`
     )).join("");
-
   const driverOpts = ['<option value="">— no current driver —</option>']
     .concat(drivers.map((d) =>
       `<option value="${d.id}" ${tc && d.id === tc.current_driver_id ? "selected" : ""}>${escapeHtml(d.name)}</option>`
     )).join("");
 
+  // Empty slot: either the vehicles list is empty (waiting for laps) or we offer a picker.
   if (!tc) {
     if (vehicles.length === 0) {
       return `
-        <div class="tracked-slot empty">
-          <label>Slot ${slot}</label>
-          <div class="muted" style="grid-column: 2 / -1; font-size: 12px;">
+        <section class="panel">
+          <div class="muted" style="font-size:13px;">
             ${event_.is_tracking
-              ? "Waiting for the first laps to come in — cars appear here as soon as the live timing reports any lap. Give it ~3 seconds for demo, longer for a real event."
+              ? "Waiting for the first laps to come in — cars appear here as soon as the live timing reports any lap (~3s for demo)."
               : "Click <strong>Start tracking</strong> at the top right. Cars will appear here once the live timing reports any lap."}
           </div>
-        </div>`;
+        </section>`;
     }
     return `
-      <div class="tracked-slot empty">
-        <label>Slot ${slot}</label>
-        <select class="tracked-vehicle" data-slot="${slot}">${vehicleOpts}</select>
-        <label>Current driver</label>
-        <select disabled><option>add a car first</option></select>
-        <span></span>
-      </div>`;
+      <section class="panel">
+        <div class="row">
+          <label>Pick a car:</label>
+          <select class="tracked-vehicle" data-slot="${slot}">${vehicleOpts}</select>
+        </div>
+      </section>`;
   }
-  // Compute laps-on-current-tyres (laps in the latest stint).
+
+  // Filled slot: show the full config card.
   const carLaps = laps.filter((l) => l.vehicle_number === tc.vehicle_number && !l.is_deleted);
   const lapsOnTyres = carLaps.filter((l) => (l.tyre_stint || 1) === (tc.tyre_stint || 1)).length;
   return `
-    <div class="tracked-slot">
-      <label>Slot ${slot}</label>
-      <select class="tracked-vehicle" data-tracked="${tc.id}">${vehicleOpts}</select>
-      <label>Current driver</label>
-      <select class="tracked-driver" data-tracked="${tc.id}">${driverOpts}</select>
-      <button class="icon-btn" data-act="remove-tracked" data-tracked="${tc.id}" title="remove">×</button>
-      <div style="grid-column: 1 / -1; display:flex; gap:10px; align-items:center; padding-top: 6px; border-top: 1px dashed var(--border); margin-top: 4px;">
-        <span class="driver-stat">Tyres:
+    <section class="panel">
+      <div class="row" style="justify-content: flex-end; margin-bottom: 4px;">
+        <button class="icon-btn" data-act="remove-tracked" data-tracked="${tc.id}" title="remove">Remove</button>
+      </div>
+      <div class="row">
+        <label>Vehicle</label>
+        <select class="tracked-vehicle" data-tracked="${tc.id}">${vehicleOpts}</select>
+      </div>
+      <div class="row">
+        <label>Car name</label>
+        <input type="text" class="tracked-name" data-tracked="${tc.id}"
+               value="${escapeHtml(tc.name || "")}"
+               placeholder="e.g. 'BMW' or 'Red Beast'" style="flex:1; min-width: 140px;" />
+      </div>
+      <div class="row">
+        <label>Description</label>
+        <input type="text" class="tracked-description" data-tracked="${tc.id}"
+               value="${escapeHtml(tc.description || "")}"
+               placeholder="optional, e.g. 'Race Tyre Test'" style="flex:1; min-width: 160px;" />
+      </div>
+      <div class="row">
+        <label>Current driver</label>
+        <select class="tracked-driver" data-tracked="${tc.id}">${driverOpts}</select>
+      </div>
+      <div class="row" style="margin-top: 6px; padding-top: 8px; border-top: 1px dashed var(--border);">
+        <label>Tyres</label>
+        <span class="driver-stat">
           <span class="stint-badge s${((tc.tyre_stint || 1) - 1) % 5 + 1}">stint ${tc.tyre_stint || 1}</span>
           <strong>${lapsOnTyres}</strong> lap${lapsOnTyres === 1 ? "" : "s"} on
         </span>
         <button class="icon-btn" data-act="tyre-change" data-tracked="${tc.id}">Tyre change</button>
       </div>
-    </div>`;
+    </section>`;
 }
 
-function renderTrackedCars() {
-  const wrap = $("#tracked-cars");
-  const bySlot = new Map(trackedCars.map((t) => [t.slot, t]));
-  const html = [];
-  for (let s = 1; s <= MAX_TRACKED_SLOTS; s++) {
-    html.push(trackedSlotHTML(s, bySlot.get(s) || null));
+function renderCarLapChartHTML(tc) {
+  return `
+    <section class="panel">
+      <h3>Lap times — colour by driver</h3>
+      <div class="muted" style="font-size:12px; margin-bottom:6px">
+        Each segment is coloured by whoever was driving on that lap.
+      </div>
+      <div class="driver-mini-chart-wrap" style="height: 240px;">
+        <canvas id="car-lap-chart-${tc.slot}"></canvas>
+      </div>
+    </section>`;
+}
+
+function drawCarLapChart(slot, tc) {
+  const canvas = document.getElementById(`car-lap-chart-${slot}`);
+  if (!canvas) return;
+  const carLaps = laps.filter((l) => l.vehicle_number === tc.vehicle_number && !l.is_deleted)
+                      .sort((a, b) => a.lap_number - b.lap_number);
+  const points = carLaps.map((l) => ({ x: l.lap_number, y: l.lap_time_ms / 1000, _lap: l }));
+  const fastThreshold = event_?.min_lap_warning_ms ?? FAST_LAP_THRESHOLD_MS;
+
+  const chart = new Chart(canvas.getContext("2d"), {
+    type: "line",
+    data: {
+      datasets: [{
+        label: tc.name ? `${tc.name} (#${tc.vehicle_number})` : `#${tc.vehicle_number}`,
+        data: points,
+        borderColor: US_COLOR,
+        backgroundColor: US_COLOR,
+        borderWidth: 3,
+        pointRadius: 4,
+        tension: 0.15,
+        segment: {
+          borderColor: (ctx) => colorForLapByDriver(points[ctx.p1DataIndex]?._lap),
+        },
+        pointBackgroundColor: (ctx) => colorForLapByDriver(points[ctx.dataIndex]?._lap),
+        pointBorderColor: (ctx) => colorForLapByDriver(points[ctx.dataIndex]?._lap),
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      parsing: false,
+      interaction: { mode: "nearest", intersect: false },
+      scales: {
+        x: { type: "linear", title: { display: true, text: "Lap #" }, ticks: { color: "#8b93a7" }, grid: { color: "#2a3140" } },
+        y: { title: { display: true, text: "Lap time (s)" }, ticks: { color: "#8b93a7" }, grid: { color: "#2a3140" } },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items) => items[0] ? `Lap ${items[0].parsed.x}` : "",
+            label: (item) => {
+              const lap = item.raw?._lap;
+              const time = lap ? fmtLapMs(lap.lap_time_ms) : `${item.parsed.y.toFixed(3)}s`;
+              const dn = driverNameForLap(lap);
+              return `${time}` + (dn ? ` • ${dn}` : "") + (lap && lap.lap_time_ms < fastThreshold ? " • ⚠ fast" : "");
+            },
+          },
+        },
+      },
+    },
+  });
+  carLapChartsBySlot.set(slot, chart);
+}
+
+function renderSlotLapsHTML(tc) {
+  const carLaps = laps.filter((l) => l.vehicle_number === tc.vehicle_number)
+                      .sort((a, b) => b.lap_number - a.lap_number);
+  // Per-event threshold (defaults to 1:12.000 if unset).
+  const fastThreshold = event_?.min_lap_warning_ms ?? FAST_LAP_THRESHOLD_MS;
+  if (!carLaps.length) {
+    return `
+      <section class="panel">
+        <h3>Laps</h3>
+        <div class="muted">No laps yet for this car.</div>
+      </section>`;
   }
-  wrap.innerHTML = html.join("");
+
+  const driverById = Object.fromEntries(drivers.map((d) => [d.id, d]));
+
+  // Build the click-to-expand driver picker. Shows the current driver as a
+  // coloured chip; clicking it reveals other drivers + an "unassigned" option.
+  function pickerHTML(lap, currentDriver) {
+    const otherDrivers = drivers.filter((d) => d.id !== lap.driver_id);
+    const unassignedOption = lap.driver_id != null
+      ? `<button data-act="set-driver" data-lap="${lap.id}" data-driver=""><span class="dot unassigned"></span>unassigned</button>`
+      : "";
+    const optsHTML = unassignedOption + otherDrivers.map((d) =>
+      `<button data-act="set-driver" data-lap="${lap.id}" data-driver="${d.id}">
+         <span class="dot" style="background:${driverColor(d)}"></span>${escapeHtml(d.name)}
+       </button>`
+    ).join("");
+    const currentBtn = currentDriver
+      ? `<button class="driver-current" data-act="toggle-driver-picker">
+           <span class="dot" style="background:${driverColor(currentDriver)}"></span>
+           <span>${escapeHtml(currentDriver.name)}</span>
+           <span class="caret">▾</span>
+         </button>`
+      : `<button class="driver-current unassigned" data-act="toggle-driver-picker">
+           <span class="dot unassigned"></span>
+           <span>unassigned</span>
+           <span class="caret">▾</span>
+         </button>`;
+    return `
+      <div class="driver-picker" data-lap="${lap.id}">
+        ${currentBtn}
+        <div class="driver-options">${optsHTML || '<span class="muted" style="padding:4px 8px;font-size:12px">no drivers added</span>'}</div>
+      </div>`;
+  }
+
+  const rowsHTML = carLaps.map((lap) => {
+    const driver = lap.driver_id ? driverById[lap.driver_id] : null;
+    const chipColor = driver ? driverColor(driver) : "transparent";
+    const chipBorder = driver ? "#00000080" : "var(--border)";
+    const stint = lap.tyre_stint || 1;
+    const stintClass = `s${((stint - 1) % 5) + 1}`;
+    const isFast = lap.lap_time_ms < fastThreshold;
+    return `
+      <tr class="us ${isFast ? "fast" : ""}">
+        <td><span class="lap-color-chip" style="background:${chipColor}; border-color:${chipBorder}"></span></td>
+        <td>${lap.lap_number}</td>
+        <td>${fmtLapMs(lap.lap_time_ms)}</td>
+        <td><span class="stint-badge ${stintClass}" title="tyre stint">S${stint}</span></td>
+        <td>${pickerHTML(lap, driver)}</td>
+        <td>
+          <input type="text" class="lap-note-input" data-lap="${lap.id}"
+                 placeholder="note…" value="${escapeHtml(lap.note || "")}" />
+        </td>
+        <td><button class="danger" data-act="delete-lap" data-lap="${lap.id}">Delete</button></td>
+      </tr>`;
+  }).join("");
+
+  return `
+    <section class="panel">
+      <h3>Laps</h3>
+      <div id="laps-scroll-${tc.slot}" style="max-height: 480px; overflow:auto">
+        <table>
+          <thead>
+            <tr><th></th><th>Lap</th><th>Time</th><th>Tyres</th><th>Driver</th><th>Note</th><th></th></tr>
+          </thead>
+          <tbody>${rowsHTML}</tbody>
+        </table>
+      </div>
+    </section>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -184,111 +539,9 @@ function lapsByDriverId(driverId) {
              .sort((a, b) => a.lap_number - b.lap_number);
 }
 
-function renderDriverCards() {
-  const wrap = $("#drivers-cards");
-
-  // Destroy any existing mini charts BEFORE replacing innerHTML — otherwise
-  // their canvases get detached and Chart.js renders into a phantom element.
-  for (const [, chart] of driverMiniCharts) chart.destroy();
-  driverMiniCharts.clear();
-
-  if (!drivers.length) {
-    wrap.innerHTML = "";
-    $("#drivers-empty").style.display = "block";
-    return;
-  }
-  $("#drivers-empty").style.display = "none";
-
-  const decorated = drivers.map((d) => {
-    const dlaps = lapsByDriverId(d.id);
-    const times = dlaps.map((l) => l.lap_time_ms);
-    return {
-      d, dlaps,
-      best: times.length ? Math.min(...times) : null,
-      total: dlaps.length,
-    };
-  }).sort((a, b) => {
-    if (a.best == null && b.best == null) return a.d.name.localeCompare(b.d.name);
-    if (a.best == null) return 1;
-    if (b.best == null) return -1;
-    return a.best - b.best;
-  });
-
-  // Identify the fastest driver (the first decorated entry that has any lap).
-  const fastestId = decorated.find((x) => x.best != null)?.d.id ?? null;
-
-  wrap.innerHTML = decorated.map(({ d, dlaps, best, total }) => {
-    const color = driverColor(d);
-    const top5 = [...dlaps].sort((a, b) => a.lap_time_ms - b.lap_time_ms).slice(0, 5);
-    const isOpen = expandedDrivers.has(d.id);
-    const isEditing = editingDriverId === d.id;
-    const isFastest = d.id === fastestId;
-
-    const top5Strip = top5.length === 0
-      ? `<span class="muted" style="font-size:12px">no laps yet</span>`
-      : top5.map((l, i) => `
-          <span class="top5-chip rank-${i + 1}" title="lap #${l.lap_number}">
-            <span class="rank">${i + 1}</span>${fmtLapMs(l.lap_time_ms)}
-          </span>`).join("");
-
-    return `
-      <details class="driver-card ${isFastest ? "fastest" : ""}" data-driver="${d.id}" ${isOpen ? "open" : ""}>
-        <summary>
-          <span class="driver-swatch" data-act="pick-color" data-driver="${d.id}"
-                style="background:${color}" title="Click to change colour"></span>
-
-          <span class="driver-name">
-            ${isEditing
-              ? `<input type="text" data-act="rename-input" data-driver="${d.id}" value="${escapeHtml(d.name)}" />`
-              : escapeHtml(d.name)}
-          </span>
-
-          <span class="driver-stat">laps <strong>${total}</strong></span>
-          <span class="driver-stat">best <strong>${fmtLapMs(best)}</strong></span>
-
-          <span class="driver-actions">
-            ${isEditing
-              ? `<button data-act="rename-save" data-driver="${d.id}" class="primary">Save</button>
-                 <button data-act="rename-cancel" data-driver="${d.id}">Cancel</button>`
-              : `<button class="icon-btn" data-act="rename" data-driver="${d.id}" title="rename">Rename</button>`}
-            <button class="icon-btn" data-act="delete-driver" data-driver="${d.id}" title="remove">×</button>
-          </span>
-
-          <div class="top5-strip">${top5Strip}</div>
-        </summary>
-
-        <div class="body">
-          <div>
-            <h3 style="margin:0 0 6px; font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em;">
-              All laps (${dlaps.length})
-            </h3>
-            ${dlaps.length === 0
-              ? `<div class="muted">No laps assigned to this driver yet.</div>`
-              : `<table>
-                   <thead><tr><th>Lap</th><th>Time</th></tr></thead>
-                   <tbody>
-                     ${dlaps.map((l) => `<tr><td>${l.lap_number}</td><td>${fmtLapMs(l.lap_time_ms)}</td></tr>`).join("")}
-                   </tbody>
-                 </table>`}
-          </div>
-          <div>
-            <h3 style="margin:0 0 6px; font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em;">
-              Lap-time history
-            </h3>
-            <div class="driver-mini-chart-wrap">
-              <canvas id="driver-mini-${d.id}"></canvas>
-            </div>
-          </div>
-        </div>
-      </details>
-    `;
-  }).join("");
-
-  for (const id of expandedDrivers) {
-    const driver = drivers.find((d) => d.id === id);
-    if (driver) drawDriverMiniChart(driver);
-  }
-}
+// Driver cards are now rendered per-car inside renderCarDriversHTML, called
+// from renderCarColumns. We keep the mini-chart lifecycle helpers + the
+// "redraw expanded charts" pass below.
 
 function drawDriverMiniChart(driver) {
   const canvas = document.getElementById(`driver-mini-${driver.id}`);
@@ -298,7 +551,7 @@ function drawDriverMiniChart(driver) {
   const color = driverColor(driver);
 
   // Mini charts are always created fresh after the parent card re-renders,
-  // because we destroyed all mini charts in renderDriverCards().
+  // because we destroyed all mini charts in renderCarColumns().
   const chart = new Chart(canvas.getContext("2d"), {
     type: "line",
     data: {
@@ -574,92 +827,40 @@ function renderPositionChart() {
 }
 
 // ---------------------------------------------------------------------------
-// Per-tracked-car laps tables
+// Leaderboard
 // ---------------------------------------------------------------------------
 
-function renderOurCarsLaps() {
-  const wrap = $("#our-cars-laps");
-  if (!trackedCars.length) {
-    wrap.innerHTML = `
-      <section class="panel">
-        <h2>Our cars laps</h2>
-        <div class="muted">Pick at least one car in the "Our cars" panel above to start logging laps.</div>
-      </section>`;
+function renderAllLapsFeed() {
+  const tbody = document.querySelector("#all-laps-feed tbody");
+  if (!tbody) return;
+  const tracked = trackedVehicles();
+  const visible = laps.filter((l) => l.completed_at && !l.is_deleted);
+  visible.sort((a, b) => tsMs(b) - tsMs(a));
+  const rows = visible.slice(0, 80);
+
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="5" class="muted">No laps yet.</td></tr>`;
     return;
   }
 
-  const driverById = Object.fromEntries(drivers.map((d) => [d.id, d]));
-  const driverOpts = (selectedId) =>
-    [`<option value="" ${selectedId == null ? "selected" : ""}>unassigned</option>`]
-      .concat(drivers.map((d) =>
-        `<option value="${d.id}" ${d.id === selectedId ? "selected" : ""}>${escapeHtml(d.name)}</option>`
-      )).join("");
+  // Preserve scroll position across the innerHTML swap (same trick as the per-car laps tables).
+  const wrap = document.getElementById("all-laps-feed-wrap");
+  const savedScroll = wrap ? wrap.scrollTop : 0;
 
-  wrap.innerHTML = trackedCars.map((tc) => {
-    const carLaps = laps.filter((l) => l.vehicle_number === tc.vehicle_number)
-                        .sort((a, b) => b.lap_number - a.lap_number);
-    const currentDriver = tc.current_driver_id ? driverById[tc.current_driver_id] : null;
-    const cdHTML = currentDriver
-      ? `<span class="driver-stat">current driver:
-           <span class="lap-color-chip" style="background:${driverColor(currentDriver)}; border-color:#00000080"></span>
-           <strong>${escapeHtml(currentDriver.name)}</strong>
-         </span>`
-      : `<span class="driver-stat">no current driver set</span>`;
-
-    if (!carLaps.length) {
-      return `
-        <section class="panel">
-          <h2>Car #${escapeHtml(tc.vehicle_number)} laps</h2>
-          <div class="row" style="margin-bottom:6px">${cdHTML}</div>
-          <div class="muted">No laps yet for this car.</div>
-        </section>`;
-    }
-
-    const rowsHTML = carLaps.map((lap) => {
-      const driver = lap.driver_id ? driverById[lap.driver_id] : null;
-      const chipColor = driver ? driverColor(driver) : "transparent";
-      const chipBorder = driver ? "#00000080" : "var(--border)";
-      const stint = lap.tyre_stint || 1;
-      const stintClass = `s${((stint - 1) % 5) + 1}`;
-      const isFast = lap.lap_time_ms < FAST_LAP_THRESHOLD_MS;
-      return `
-        <tr class="us ${isFast ? "fast" : ""}">
-          <td><span class="lap-color-chip" style="background:${chipColor}; border-color:${chipBorder}"></span></td>
-          <td>${lap.lap_number}</td>
-          <td>${fmtLapMs(lap.lap_time_ms)}</td>
-          <td><span class="stint-badge ${stintClass}" title="tyre stint">S${stint}</span></td>
-          <td>
-            <select class="lap-driver" data-lap="${lap.id}">
-              ${driverOpts(lap.driver_id)}
-            </select>
-          </td>
-          <td>
-            <input type="text" class="lap-note-input" data-lap="${lap.id}"
-                   placeholder="note…" value="${escapeHtml(lap.note || "")}" />
-          </td>
-          <td><button class="danger" data-act="delete-lap" data-lap="${lap.id}">Delete</button></td>
-        </tr>`;
-    }).join("");
-
+  tbody.innerHTML = rows.map((l) => {
+    const isUs = tracked.has(l.vehicle_number);
     return `
-      <section class="panel">
-        <h2>Car #${escapeHtml(tc.vehicle_number)} laps</h2>
-        <div class="row" style="margin-bottom:6px">${cdHTML}</div>
-        <div style="max-height: 380px; overflow:auto">
-          <table>
-            <thead>
-              <tr><th></th><th>Lap</th><th>Time</th><th>Tyres</th><th>Driver</th><th>Note</th><th></th></tr>
-            </thead>
-            <tbody>${rowsHTML}</tbody>
-          </table>
-        </div>
-      </section>`;
+      <tr class="${isUs ? "us" : ""}">
+        <td>${fmtTimeOfDay(tsMs(l))}</td>
+        <td><strong>#${escapeHtml(l.vehicle_number)}</strong></td>
+        <td>${l.lap_number}</td>
+        <td>${fmtLapMs(l.lap_time_ms)}</td>
+        <td>${l.position ?? "—"}</td>
+      </tr>`;
   }).join("");
-}
 
-// ---------------------------------------------------------------------------
-// Leaderboard
-// ---------------------------------------------------------------------------
+  if (savedScroll > 0 && wrap) wrap.scrollTop = savedScroll;
+}
 
 function renderLeaderboard(rows) {
   const tbody = $("#leaderboard tbody");
@@ -708,7 +909,7 @@ async function tick() {
       API.listTracked(EVENT_ID),
     ]);
     event_ = ev; drivers = drv; vehicles = veh; laps = lp; trackedCars = tc;
-    renderAll(lb, { skipDriverCardsIfEditing: true, skipLapsIfEditingNote: true });
+    renderAll(lb, { skipDriverCardsIfEditing: true, skipCarColumnsIfEditingNote: true });
   } catch (err) {
     console.error("tick failed", err);
   }
@@ -716,16 +917,24 @@ async function tick() {
 
 function renderAll(leaderboardRows, opts = {}) {
   renderHeader();
-  renderTrackedCars();
-  if (!opts.skipDriverCardsIfEditing || editingDriverId == null) renderDriverCards();
+  // Driver cards live inside renderCarColumns now — nothing to call here.
   renderAllDriversChart();
   renderAllCarsChart();
   renderPositionChart();
-  // Don't blow away an in-progress lap-note edit on every tick: skip the
-  // re-render if the user is currently typing in a note input.
-  if (!opts.skipLapsIfEditingNote || !document.activeElement?.classList?.contains("lap-note-input")) {
-    renderOurCarsLaps();
+  // Cars columns now contain the laps tables — skip re-render if a note is being edited
+  // so we don't blow away the user's in-progress text.
+  // Skip the per-car columns re-render if the user is currently typing in
+  // either a lap-note input or the per-car description input. Otherwise we
+  // wipe their text mid-typing.
+  const ae = document.activeElement;
+  const editingNote = ae?.classList?.contains("lap-note-input");
+  const editingDesc = ae?.classList?.contains("tracked-description");
+  const editingCarName = ae?.classList?.contains("tracked-name");
+  const editingNewDriver = ae?.classList?.contains("new-car-driver-input");
+  if (!opts.skipCarColumnsIfEditingNote || (!editingNote && !editingDesc && !editingCarName && !editingNewDriver)) {
+    renderCarColumns();
   }
+  renderAllLapsFeed();
   renderLeaderboard(leaderboardRows);
 }
 
@@ -783,21 +992,20 @@ $("#track-btn").addEventListener("click", async () => {
   }
 });
 
-$("#add-driver-btn").addEventListener("click", async () => {
-  const name = $("#new-driver").value.trim();
-  if (!name) return;
-  try {
-    await API.addDriver(EVENT_ID, { name });
-    $("#new-driver").value = "";
-    await loadAll();
-  } catch (err) {
-    alert("Add driver failed: " + err.message);
-  }
-});
+// Per-car add-driver lives under [data-act="add-car-driver"] in the click listener
+// below — drivers belong to a specific car via Driver.vehicle_number.
 
 $("#all-cars-filter").addEventListener("change", (e) => {
   allCarsFilter = e.target.value;
   renderAllCarsChart();
+});
+
+// Cars-view toggle: Car 1 / Car 2 / Both
+document.querySelectorAll("#cars-view-toggle button").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    carsView = btn.dataset.view;
+    renderCarColumns();
+  });
 });
 
 // Track which driver cards are open across re-renders.
@@ -848,7 +1056,7 @@ document.addEventListener("click", async (e) => {
     e.preventDefault();
     e.stopPropagation();
     editingDriverId = parseInt(renameBtn.dataset.driver, 10);
-    renderDriverCards();
+    renderCarColumns();
     const inp = document.querySelector(`[data-act="rename-input"][data-driver="${editingDriverId}"]`);
     if (inp) { inp.focus(); inp.select(); }
     return;
@@ -858,7 +1066,7 @@ document.addEventListener("click", async (e) => {
     e.preventDefault();
     e.stopPropagation();
     editingDriverId = null;
-    renderDriverCards();
+    renderCarColumns();
     return;
   }
   const saveBtn = e.target.closest('[data-act="rename-save"]');
@@ -909,6 +1117,27 @@ document.addEventListener("click", async (e) => {
     return;
   }
 
+  // Per-car: Add driver
+  const addCarDriver = e.target.closest('[data-act="add-car-driver"]');
+  if (addCarDriver) {
+    e.preventDefault();
+    e.stopPropagation();
+    const trackedId = parseInt(addCarDriver.dataset.tracked, 10);
+    const tc = trackedCars.find((t) => t.id === trackedId);
+    if (!tc) return;
+    const inp = document.querySelector(`.new-car-driver-input[data-tracked="${trackedId}"]`);
+    const name = (inp?.value || "").trim();
+    if (!name) return;
+    try {
+      await API.addDriver(EVENT_ID, { name, vehicle_number: tc.vehicle_number });
+      if (inp) inp.value = "";
+      await loadAll();
+    } catch (err) {
+      alert("Add driver failed: " + err.message);
+    }
+    return;
+  }
+
   // Tyre change
   const tyreBtn = e.target.closest('[data-act="tyre-change"]');
   if (tyreBtn) {
@@ -921,6 +1150,39 @@ document.addEventListener("click", async (e) => {
       alert("Tyre change failed: " + err.message);
     }
     return;
+  }
+
+  // Driver picker — toggle open/closed
+  const togglePicker = e.target.closest('[data-act="toggle-driver-picker"]');
+  if (togglePicker) {
+    e.preventDefault();
+    e.stopPropagation();
+    const picker = togglePicker.closest('.driver-picker');
+    const wasOpen = picker.classList.contains("open");
+    document.querySelectorAll(".driver-picker.open").forEach((p) => p.classList.remove("open"));
+    if (!wasOpen) picker.classList.add("open");
+    return;
+  }
+  // Driver picker — pick an option
+  const setDriver = e.target.closest('[data-act="set-driver"]');
+  if (setDriver) {
+    e.preventDefault();
+    e.stopPropagation();
+    const lapId = setDriver.dataset.lap;
+    const driverIdRaw = setDriver.dataset.driver;
+    const driver_id = driverIdRaw ? parseInt(driverIdRaw, 10) : null;
+    document.querySelectorAll(".driver-picker.open").forEach((p) => p.classList.remove("open"));
+    try {
+      await API.updateLap(lapId, { driver_id });
+      await tick();
+    } catch (err) {
+      alert("Assign driver failed: " + err.message);
+    }
+    return;
+  }
+  // Click outside any picker → close any open picker
+  if (!e.target.closest(".driver-picker")) {
+    document.querySelectorAll(".driver-picker.open").forEach((p) => p.classList.remove("open"));
   }
 
   // Soft delete a lap
@@ -978,30 +1240,57 @@ document.addEventListener("change", async (e) => {
     }
     return;
   }
-  // Per-lap driver assignment
-  if (e.target.classList.contains("lap-driver")) {
-    const lapId = e.target.dataset.lap;
-    const driver_id = e.target.value ? parseInt(e.target.value, 10) : null;
+  // Description (saved on commit — change fires on blur or Enter)
+  if (e.target.classList.contains("tracked-description")) {
+    const id = e.target.dataset.tracked;
     try {
-      await API.updateLap(lapId, { driver_id });
-      await tick();
+      await API.updateTracked(id, { description: e.target.value });
+      await loadAll();
     } catch (err) {
-      alert("Assign driver failed: " + err.message);
+      alert("Update description failed: " + err.message);
     }
+    return;
+  }
+  // Car name (e.g., "BMW")
+  if (e.target.classList.contains("tracked-name")) {
+    const id = e.target.dataset.tracked;
+    try {
+      await API.updateTracked(id, { name: e.target.value });
+      await loadAll();
+    } catch (err) {
+      alert("Update car name failed: " + err.message);
+    }
+    return;
   }
 });
 
 // Enter to save / Escape to cancel rename input.
 document.addEventListener("keydown", (e) => {
   const inp = e.target.closest('[data-act="rename-input"]');
-  if (!inp) return;
-  if (e.key === "Enter") {
+  if (inp) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      document.querySelector(`[data-act="rename-save"][data-driver="${inp.dataset.driver}"]`)?.click();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      editingDriverId = null;
+      renderCarColumns();
+    }
+    return;
+  }
+  // Enter in the "Add driver" input fires the Add button.
+  // Enter in any per-car "Add driver" input fires that car's Add button.
+  if (e.target.classList.contains("new-car-driver-input") && e.key === "Enter") {
     e.preventDefault();
-    document.querySelector(`[data-act="rename-save"][data-driver="${inp.dataset.driver}"]`)?.click();
-  } else if (e.key === "Escape") {
+    const id = e.target.dataset.tracked;
+    document.querySelector(`[data-act="add-car-driver"][data-tracked="${id}"]`)?.click();
+    return;
+  }
+  // Enter in the event-settings "Add member" email input fires the Add button.
+  if (e.target.id === "member-email" && e.key === "Enter") {
     e.preventDefault();
-    editingDriverId = null;
-    renderDriverCards();
+    document.getElementById("add-member-btn")?.click();
+    return;
   }
 });
 
@@ -1063,9 +1352,198 @@ document.addEventListener("blur", (e) => {
 }, true);
 
 // ---------------------------------------------------------------------------
+// Event settings modal (owner-only)
+// ---------------------------------------------------------------------------
+
+function openEventSettings() {
+  if (!event_ || event_.role !== "owner") return;
+  $("#event-name-input").value = event_.name;
+  $("#min-lap-input").value = fmtLapMs(event_.min_lap_warning_ms ?? FAST_LAP_THRESHOLD_MS);
+  $("#min-lap-msg").textContent = "";
+  $("#public-toggle").checked = !!event_.is_public;
+  $("#public-msg").textContent = "";
+  $("#event-settings-modal").style.display = "flex";
+  refreshMembers();
+}
+
+// Parse "M:SS.mmm" or plain seconds into milliseconds. Returns null if unparseable.
+function parseLapInput(s) {
+  if (!s) return null;
+  s = String(s).trim();
+  const mss = s.match(/^(\d+):(\d+(?:[.,]\d+)?)$/);
+  if (mss) {
+    const minutes = parseInt(mss[1], 10);
+    const seconds = parseFloat(mss[2].replace(",", "."));
+    return Math.round((minutes * 60 + seconds) * 1000);
+  }
+  const n = parseFloat(s.replace(",", "."));
+  if (!isNaN(n)) return Math.round(n * 1000);
+  return null;
+}
+
+function closeEventSettings() {
+  $("#event-settings-modal").style.display = "none";
+}
+
+async function refreshMembers() {
+  try {
+    members = await API.listMembers(EVENT_ID);
+  } catch (err) {
+    members = [];
+  }
+  const wrap = $("#members-list");
+  if (!members.length) {
+    wrap.innerHTML = "";
+    $("#members-empty").style.display = "block";
+    return;
+  }
+  $("#members-empty").style.display = "none";
+  wrap.innerHTML = members.map((m) => `
+    <div class="member-row">
+      <span class="email">${escapeHtml(m.email)}</span>
+      <select data-act="member-role" data-member="${m.id}">
+        <option value="read"  ${m.role === "read"  ? "selected" : ""}>Read only</option>
+        <option value="write" ${m.role === "write" ? "selected" : ""}>Can edit</option>
+      </select>
+      <button class="icon-btn" data-act="remove-member" data-member="${m.id}">Remove</button>
+    </div>
+  `).join("");
+}
+
+$("#event-settings-btn").addEventListener("click", openEventSettings);
+
+document.addEventListener("click", async (e) => {
+  if (e.target.closest('[data-act="close-event-settings"]')) {
+    closeEventSettings();
+    return;
+  }
+  // Backdrop click closes
+  if (e.target.id === "event-settings-modal") {
+    closeEventSettings();
+    return;
+  }
+  if (e.target.id === "save-event-name") {
+    const name = $("#event-name-input").value.trim();
+    if (!name) { alert("Name cannot be empty"); return; }
+    try {
+      await API.updateEvent(EVENT_ID, { name });
+      await loadAll();
+      closeEventSettings();
+    } catch (err) {
+      alert("Save failed: " + err.message);
+    }
+    return;
+  }
+  if (e.target.id === "save-min-lap") {
+    const msg = $("#min-lap-msg");
+    const ms = parseLapInput($("#min-lap-input").value);
+    if (ms == null) {
+      msg.style.color = "var(--bad)";
+      msg.textContent = "Couldn't parse that. Try \"1:12\", \"1:12.500\", \"72\", or \"72.5\".";
+      return;
+    }
+    if (ms < 1000 || ms > 600_000) {
+      msg.style.color = "var(--bad)";
+      msg.textContent = "Must be between 1 second and 10 minutes.";
+      return;
+    }
+    msg.style.color = "var(--muted)";
+    msg.textContent = "Saving…";
+    try {
+      await API.updateEvent(EVENT_ID, { min_lap_warning_ms: ms });
+      await loadAll();
+      msg.style.color = "var(--accent-2)";
+      msg.textContent = `Saved (${fmtLapMs(ms)})`;
+    } catch (err) {
+      msg.style.color = "var(--bad)";
+      msg.textContent = err.message;
+    }
+    return;
+  }
+  if (e.target.id === "add-member-btn") {
+    const email = $("#member-email").value.trim();
+    const role = $("#member-role").value;
+    if (!email) return;
+    try {
+      await API.addMember(EVENT_ID, { email, role });
+      $("#member-email").value = "";
+      await refreshMembers();
+    } catch (err) {
+      alert("Add member failed: " + err.message);
+    }
+    return;
+  }
+  const removeMember = e.target.closest('[data-act="remove-member"]');
+  if (removeMember) {
+    if (!confirm("Remove this person from the event?")) return;
+    try {
+      await API.deleteMember(EVENT_ID, removeMember.dataset.member);
+      await refreshMembers();
+    } catch (err) {
+      alert("Remove failed: " + err.message);
+    }
+    return;
+  }
+  if (e.target.id === "delete-event-btn") {
+    if (!confirm("Permanently delete this event and all its data? This cannot be undone.")) return;
+    try {
+      await API.deleteEvent(EVENT_ID);
+      location.replace("/");
+    } catch (err) {
+      alert("Delete failed: " + err.message);
+    }
+  }
+});
+
+document.addEventListener("change", async (e) => {
+  // Public/private toggle in event settings
+  if (e.target.id === "public-toggle") {
+    const checked = e.target.checked;
+    const msg = $("#public-msg");
+    msg.style.color = "var(--muted)";
+    msg.textContent = "Saving…";
+    try {
+      await API.updateEvent(EVENT_ID, { is_public: checked });
+      await loadAll();
+      msg.style.color = "var(--accent-2)";
+      msg.textContent = checked ? "Public — anyone signed in can view." : "Private — only you and invited members.";
+    } catch (err) {
+      e.target.checked = !checked;   // revert UI
+      msg.style.color = "var(--bad)";
+      msg.textContent = err.message;
+    }
+    return;
+  }
+  const memberRoleSel = e.target.closest('[data-act="member-role"]');
+  if (!memberRoleSel) return;
+  try {
+    await API.updateMember(EVENT_ID, memberRoleSel.dataset.member, { role: memberRoleSel.value });
+    await refreshMembers();
+  } catch (err) {
+    alert("Update role failed: " + err.message);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
 
-loadAll().then(() => {
+(async () => {
+  currentUser = await Auth.requireAuth();
+  await renderUserBar(currentUser);
+  // Wire the Competitors link to the same event id.
+  const compLink = document.getElementById("competitors-link");
+  if (compLink) compLink.href = `/competitors?event=${EVENT_ID}`;
+  try {
+    await loadAll();
+  } catch (err) {
+    if (err.status === 404) {
+      alert("This event no longer exists, or you don't have access.");
+      location.replace("/");
+      return;
+    }
+    alert("Failed to load dashboard: " + err.message);
+    return;
+  }
   setInterval(tick, REFRESH_MS);
-}).catch((err) => alert("Failed to load dashboard: " + err.message));
+})();

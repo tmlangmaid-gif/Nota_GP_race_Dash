@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Race Dash — Account settings</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="row">
+      <a href="/">←</a>
+      <h1>Account settings</h1>
+    </div>
+    <div id="user-bar" class="row" style="gap: 8px;"></div>
+  </header>
+
+  <main style="max-width: 560px;">
+
+    <section class="panel">
+      <h2>Email address</h2>
+      <div class="row" style="margin-bottom: 8px;">
+        <span class="muted" style="font-size:13px;">Currently:</span>
+        <strong id="current-email">…</strong>
+      </div>
+      <form id="email-form">
+        <div style="margin-bottom:8px;">
+          <label class="muted" style="font-size:12px;">New email</label>
+          <input type="email" id="new-email" style="width:100%;" required />
+        </div>
+        <div style="margin-bottom:8px;">
+          <label class="muted" style="font-size:12px;">Current password (to confirm)</label>
+          <input type="password" id="email-current-pw" style="width:100%;" required />
+        </div>
+        <button type="submit" class="primary">Update email</button>
+        <span id="email-msg" class="muted" style="margin-left:10px;"></span>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2>Password</h2>
+      <form id="password-form">
+        <div style="margin-bottom:8px;">
+          <label class="muted" style="font-size:12px;">Current password</label>
+          <input type="password" id="pw-current" style="width:100%;" required />
+        </div>
+        <div style="margin-bottom:8px;">
+          <label class="muted" style="font-size:12px;">New password (min 8 chars)</label>
+          <input type="password" id="pw-new" minlength="8" style="width:100%;" required />
+        </div>
+        <div style="margin-bottom:8px;">
+          <label class="muted" style="font-size:12px;">Confirm new password</label>
+          <input type="password" id="pw-confirm" minlength="8" style="width:100%;" required />
+        </div>
+        <button type="submit" class="primary">Update password</button>
+        <span id="pw-msg" class="muted" style="margin-left:10px;"></span>
+      </form>
+    </section>
+
+  </main>
+
+  <script src="/static/config.js"></script>
+  <script src="/static/auth.js"></script>
+  <script src="/static/api.js"></script>
+  <script src="/static/header-bar.js"></script>
+  <script>
+    (async () => {
+      const me = await Auth.requireAuth();
+      await renderUserBar(me);
+      document.getElementById("current-email").textContent = me.email;
+
+      document.getElementById("email-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const msg = document.getElementById("email-msg");
+        msg.style.color = "var(--muted)";
+        msg.textContent = "Saving…";
+        try {
+          const updated = await Auth.updateMe({
+            email: document.getElementById("new-email").value.trim(),
+            current_password: document.getElementById("email-current-pw").value,
+          });
+          msg.style.color = "var(--accent-2)";
+          msg.textContent = "Email updated.";
+          document.getElementById("current-email").textContent = updated.email;
+          document.getElementById("new-email").value = "";
+          document.getElementById("email-current-pw").value = "";
+        } catch (err) {
+          msg.style.color = "var(--bad)";
+          msg.textContent = err.message;
+        }
+      });
+
+      document.getElementById("password-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const msg = document.getElementById("pw-msg");
+        const newPw = document.getElementById("pw-new").value;
+        const confirmPw = document.getElementById("pw-confirm").value;
+        if (newPw !== confirmPw) {
+          msg.style.color = "var(--bad)";
+          msg.textContent = "New password and confirmation don't match.";
+          return;
+        }
+        msg.style.color = "var(--muted)";
+        msg.textContent = "Saving…";
+        try {
+          await Auth.updateMe({
+            current_password: document.getElementById("pw-current").value,
+            new_password: newPw,
+          });
+          msg.style.color = "var(--accent-2)";
+          msg.textContent = "Password updated.";
+          document.getElementById("pw-current").value = "";
+          document.getElementById("pw-new").value = "";
+          document.getElementById("pw-confirm").value = "";
+        } catch (err) {
+          msg.style.color = "var(--bad)";
+          msg.textContent = err.message;
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -1,6 +1,9 @@
 {
   "cleanUrls": true,
   "rewrites": [
-    { "source": "/dashboard", "destination": "/dashboard.html" }
+    { "source": "/dashboard",   "destination": "/dashboard.html"   },
+    { "source": "/login",       "destination": "/login.html"       },
+    { "source": "/settings",    "destination": "/settings.html"    },
+    { "source": "/competitors", "destination": "/competitors.html" }
   ]
 }

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Race Dash — Sign in</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="top">
+    <h1>Race Dash</h1>
+    <div class="meta">Sign in</div>
+  </header>
+
+  <main style="max-width: 440px; margin: 32px auto;">
+    <section class="panel">
+      <div class="row" style="justify-content: center; gap: 4px; margin-bottom: 12px;">
+        <button id="tab-login"  class="primary">Log in</button>
+        <button id="tab-signup">Sign up</button>
+      </div>
+
+      <form id="auth-form">
+        <div style="margin-bottom: 10px;">
+          <label class="muted" style="font-size:12px; text-transform:uppercase; letter-spacing:0.05em;">Email</label>
+          <input type="email" id="email" required autofocus style="width:100%;" />
+        </div>
+        <div style="margin-bottom: 10px;">
+          <label class="muted" style="font-size:12px; text-transform:uppercase; letter-spacing:0.05em;">Password</label>
+          <input type="password" id="password" required minlength="8" style="width:100%;" />
+          <div id="password-hint" class="muted" style="font-size:12px; margin-top:4px; display:none;">Min 8 characters.</div>
+        </div>
+
+        <button type="submit" class="primary" style="width:100%;" id="submit-btn">Log in</button>
+        <div id="auth-error" class="muted" style="color: var(--bad); margin-top:8px; display:none;"></div>
+      </form>
+    </section>
+  </main>
+
+  <script src="/static/config.js"></script>
+  <script src="/static/auth.js"></script>
+  <script>
+    (function () {
+      // If we're already logged in, bounce to home.
+      if (Auth.getToken()) location.replace("/");
+
+      const form = document.getElementById("auth-form");
+      const tabLogin = document.getElementById("tab-login");
+      const tabSignup = document.getElementById("tab-signup");
+      const submitBtn = document.getElementById("submit-btn");
+      const errBox = document.getElementById("auth-error");
+      const pwHint = document.getElementById("password-hint");
+
+      let mode = "login";
+      function setMode(m) {
+        mode = m;
+        tabLogin.className  = m === "login"  ? "primary" : "";
+        tabSignup.className = m === "signup" ? "primary" : "";
+        submitBtn.textContent = m === "login" ? "Log in" : "Create account";
+        pwHint.style.display = m === "signup" ? "block" : "none";
+        errBox.style.display = "none";
+      }
+      tabLogin.addEventListener("click", () => setMode("login"));
+      tabSignup.addEventListener("click", () => setMode("signup"));
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        errBox.style.display = "none";
+        submitBtn.disabled = true;
+        try {
+          const email = document.getElementById("email").value.trim();
+          const password = document.getElementById("password").value;
+          if (mode === "signup") {
+            await Auth.signup(email, password);
+          } else {
+            await Auth.login(email, password);
+          }
+          location.replace("/");
+        } catch (err) {
+          errBox.textContent = err.message || String(err);
+          errBox.style.display = "block";
+        } finally {
+          submitBtn.disabled = false;
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

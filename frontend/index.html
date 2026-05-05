@@ -8,21 +8,29 @@
 </head>
 <body>
   <header class="top">
-    <h1>Race Dash</h1>
-    <div class="meta">Events</div>
+    <div class="row">
+      <h1>Race Dash</h1>
+      <div class="meta">Events</div>
+    </div>
+    <div id="user-bar" class="row"></div>
   </header>
 
   <main>
     <section class="panel">
       <h2>New event</h2>
-      <form id="new-event-form" class="row">
+      <form id="new-event-form" class="row" style="flex-wrap: wrap;">
         <input type="text" id="event-name" placeholder="Event name (e.g. Nota GP — Round 3)" required />
-        <input type="url" id="natsoft-url" placeholder="Natsoft event URL (or demo:// for synthetic data)" style="flex:1; min-width: 320px" />
+        <input type="url" id="natsoft-url" placeholder="Natsoft event URL (or demo:// for synthetic data)" style="flex:1; min-width: 280px" />
+        <button type="button" id="browse-natsoft-btn" title="Open Natsoft live timing in a popup">Browse Natsoft…</button>
+        <button type="button" id="paste-natsoft-btn" title="Fill the URL from your clipboard">Paste URL</button>
         <button type="submit" class="primary">Create</button>
       </form>
       <div class="muted" style="margin-top: 8px; font-size: 12px;">
-        Tip: paste the live timing URL of the specific session/event from racing.natsoft.com.au.
-        Use <code>demo://</code> for synthetic data while developing.
+        How to use: click <strong>Browse Natsoft…</strong> → drill down to your event in the popup →
+        copy the URL from its address bar (Ctrl+L, Ctrl+C) → click <strong>Paste URL</strong> → <strong>Create</strong>.
+        Or use <code>demo://</code> for synthetic data.
+        <br />
+        <span style="opacity: 0.7;">Browsers block us from reading a cross-site URL automatically — that's why a quick copy/paste step is needed.</span>
       </div>
     </section>
 
@@ -34,7 +42,9 @@
   </main>
 
   <script src="/static/config.js"></script>
+  <script src="/static/auth.js"></script>
   <script src="/static/api.js"></script>
+  <script src="/static/header-bar.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

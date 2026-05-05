@@ -316,3 +316,196 @@ tr.deleted td { opacity: 0.4; text-decoration: line-through; }
 
 tr.fast td { background: rgba(255, 80, 80, 0.14) !important; }
 tr.us.fast td { background: rgba(255, 100, 80, 0.20) !important; }
+
+/* --- Modal --- */
+
+.modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.55);
+  z-index: 2000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 40px 16px;
+  overflow: auto;
+}
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 18px;
+  width: 100%;
+  max-width: 640px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+}
+
+.member-row {
+  display: grid;
+  grid-template-columns: 1fr max-content max-content;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.member-row:last-child { border-bottom: none; }
+.member-row .email { font-variant-numeric: tabular-nums; }
+.member-row select { min-width: 100px; }
+
+/* --- Split per-car laps view --- */
+
+.lap-tables-toggle {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.lap-tables-toggle button {
+  padding: 4px 12px;
+  font-size: 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.lap-tables-toggle button.active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+.lap-tables-toggle button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.lap-tables-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.lap-tables-grid.single { grid-template-columns: 1fr; }
+.lap-tables-grid.hide-1 .car-col[data-slot="1"] { display: none; }
+.lap-tables-grid.hide-2 .car-col[data-slot="2"] { display: none; }
+@media (max-width: 1000px) {
+  .lap-tables-grid { grid-template-columns: 1fr; }
+}
+
+.car-col .panel:first-child { margin-top: 0; }
+.car-col .panel { margin-bottom: 12px; }
+.car-col h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.car-col .row label { font-size: 12px; color: var(--muted); min-width: 90px; }
+.car-col select { min-width: 140px; }
+
+.car-col-header {
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(255,210,74,0.06), rgba(255,210,74,0.01));
+}
+.car-col-header.empty {
+  background: transparent;
+  border-style: dashed;
+}
+.car-col-header .slot-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--us);
+  font-weight: 700;
+}
+.car-col-header.empty .slot-label { color: var(--muted); }
+.car-col-header .car-title {
+  font-size: 18px;
+  font-weight: 700;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.car-col-header .car-desc {
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--muted);
+  font-style: italic;
+}
+.car-col-header .car-num-badge {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 500;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  padding: 1px 8px;
+  border-radius: 999px;
+  margin-left: 6px;
+  font-variant-numeric: tabular-nums;
+  vertical-align: middle;
+}
+
+/* --- Driver picker (replaces the old <select> for lap-driver) --- */
+
+.driver-picker { position: relative; display: inline-block; }
+.driver-picker .driver-current {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+}
+.driver-picker .driver-current:hover { background: rgba(255,255,255,0.05); }
+.driver-picker .driver-current.unassigned { color: var(--muted); }
+.driver-picker .dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  border: 1px solid #00000080;
+  flex: 0 0 auto;
+}
+.driver-picker .dot.unassigned { border-style: dashed; background: transparent; border-color: var(--border); }
+.driver-picker .caret { color: var(--muted); font-size: 10px; margin-left: 2px; }
+
+.driver-picker .driver-options {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 200;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 150px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.4);
+}
+.driver-picker:not(.open) .driver-options { display: none; }
+.driver-options button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+}
+.driver-options button:hover { background: rgba(255,255,255,0.06); }
+.driver-options .dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  border: 1px solid #00000080;
+  flex: 0 0 auto;
+}
+.driver-options .dot.unassigned { border-style: dashed; background: transparent; border-color: var(--border); }

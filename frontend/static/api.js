@@ -1,14 +1,27 @@
 // Tiny fetch wrapper. Throws on non-2xx with the response body as message.
+// Auth header is included from window.Auth (auth.js must load before this file).
 async function api(path, opts = {}) {
   const base = window.API_BASE || "";
+  const authHeaders = (window.Auth && Auth.authHeader) ? Auth.authHeader() : {};
   const res = await fetch(base + path, {
-    headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
+    headers: { "Content-Type": "application/json", ...authHeaders, ...(opts.headers || {}) },
     ...opts,
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
+  if (res.status === 401) {
+    // Token rejected — clear it and bounce to login.
+    if (window.Auth) Auth.clearToken();
+    if (location.pathname !== "/login") location.replace("/login");
+    const err = new Error("not authenticated");
+    err.status = 401;
+    throw err;
+  }
   if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    throw new Error(`${res.status} ${text}`);
+    let text;
+    try { text = JSON.stringify(await res.json()); } catch (_) { text = await res.text().catch(() => res.statusText); }
+    const err = new Error(`${res.status} ${text}`);
+    err.status = res.status;
+    throw err;
   }
   if (res.status === 204) return null;
   const ct = res.headers.get("content-type") || "";
@@ -24,6 +37,12 @@ const API = {
   deleteEvent: (id) => api(`/api/events/${id}`, { method: "DELETE" }),
   startTracking: (id) => api(`/api/events/${id}/start_tracking`, { method: "POST" }),
   stopTracking: (id) => api(`/api/events/${id}/stop_tracking`, { method: "POST" }),
+
+  // event sharing
+  listMembers: (eventId) => api(`/api/events/${eventId}/members`),
+  addMember: (eventId, body) => api(`/api/events/${eventId}/members`, { method: "POST", body }),
+  updateMember: (eventId, memberId, body) => api(`/api/events/${eventId}/members/${memberId}`, { method: "PATCH", body }),
+  deleteMember: (eventId, memberId) => api(`/api/events/${eventId}/members/${memberId}`, { method: "DELETE" }),
 
   // drivers
   listDrivers: (eventId) => api(`/api/events/${eventId}/drivers`),
