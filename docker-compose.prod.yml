@@ -34,7 +34,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # Pull every key=value pair from .env into the container as env vars, so
+    # adding a new var (e.g. RESEND_API_KEY) is a one-line edit to .env without
+    # touching the compose file.
+    env_file: .env
     environment:
+      # Explicit overrides built from compose-time substitution.
       DATABASE_URL: postgresql+psycopg://racedash:${POSTGRES_PASSWORD}@db:5432/racedash
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
       PORT: "8000"
