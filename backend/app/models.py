@@ -28,6 +28,20 @@ class AuthToken(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+def default_reset_token_expiry() -> datetime:
+    return datetime.utcnow() + timedelta(hours=1)
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    token: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, default=default_reset_token_expiry, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
 class Event(Base):
     __tablename__ = "events"
 

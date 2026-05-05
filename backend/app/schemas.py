@@ -30,6 +30,15 @@ class UpdateMeRequest(BaseModel):
     new_password: str | None = Field(default=None, min_length=8, max_length=200)
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str = Field(min_length=8, max_length=200)
+
+
 class EventMemberCreate(BaseModel):
     email: str
     role: str = "read"   # "read" | "write"

@@ -16,15 +16,18 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .db import Base, engine, ensure_column, get_db, SessionLocal
-from .models import AuthToken, Driver, Event, EventMember, Lap, TrackedCar, User
+from .email_sender import send_password_reset_email
+from .models import AuthToken, Driver, Event, EventMember, Lap, PasswordResetToken, TrackedCar, User
 from .schemas import (
     AuthResponse,
     DriverCreate, DriverOut, DriverUpdate,
     EventCreate, EventOut, EventUpdate,
     EventMemberCreate, EventMemberOut, EventMemberUpdate,
+    ForgotPasswordRequest,
     LapOut, LapUpdate,
     LeaderboardRow,
     LoginRequest,
+    ResetPasswordRequest,
     SignupRequest,
     TrackedCarCreate, TrackedCarOut, TrackedCarUpdate,
     UpdateMeRequest,
@@ -277,6 +280,58 @@ def update_me(
     db.commit()
     db.refresh(user)
     return user
+
+
+# ---------------------------------------------------------------------------
+# Password reset
+# ---------------------------------------------------------------------------
+
+from fastapi import Response  # local import to keep top of file tidy
+from sqlalchemy import delete as sa_delete
+
+@app.post("/api/auth/request_password_reset", status_code=204)
+def request_password_reset(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    """Email the user a one-time reset link if their email is registered.
+    We always return 204 so callers can't probe which emails have accounts."""
+    email = normalise_email(payload.email)
+    user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
+    if user:
+        # Optionally clean up old unused tokens for this user before issuing a fresh one.
+        db.execute(
+            sa_delete(PasswordResetToken).where(
+                PasswordResetToken.user_id == user.id,
+                PasswordResetToken.used_at.is_(None),
+            )
+        )
+        token = gen_token()
+        db.add(PasswordResetToken(token=token, user_id=user.id))
+        db.commit()
+        try:
+            send_password_reset_email(user.email, token)
+        except Exception as exc:
+            # Don't surface the error to the caller (would leak send-config issues),
+            # but log it so the operator can see what failed.
+            logging.getLogger("auth").exception("Failed to send reset email: %s", exc)
+    return Response(status_code=204)
+
+
+@app.post("/api/auth/reset_password")
+def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
+    """Validate a reset token, set the new password, mark the token used,
+    and invalidate all of this user's existing auth sessions."""
+    pr = db.get(PasswordResetToken, payload.token)
+    if pr is None or pr.used_at is not None or pr.expires_at < datetime.utcnow():
+        raise HTTPException(400, "this reset link is invalid or has expired")
+    user = db.get(User, pr.user_id)
+    if user is None:
+        raise HTTPException(400, "this reset link is invalid")
+    user.password_hash = hash_password(payload.new_password)
+    pr.used_at = datetime.utcnow()
+    # Log out every device for this user (any other live tokens) — standard
+    # post-reset hygiene so a stolen session can't survive the reset.
+    db.execute(sa_delete(AuthToken).where(AuthToken.user_id == user.id))
+    db.commit()
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
@@ -885,3 +940,11 @@ if FRONTEND_DIR.exists():
     @app.get("/competitors")
     def competitors_page():
         return FileResponse(FRONTEND_DIR / "competitors.html")
+
+    @app.get("/forgot-password")
+    def forgot_password_page():
+        return FileResponse(FRONTEND_DIR / "forgot-password.html")
+
+    @app.get("/reset-password")
+    def reset_password_page():
+        return FileResponse(FRONTEND_DIR / "reset-password.html")
