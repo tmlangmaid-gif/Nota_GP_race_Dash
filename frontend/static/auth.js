@@ -8,9 +8,12 @@ window.Auth = (function () {
   const base = () => window.API_BASE || "";
 
   async function rawFetch(path, opts = {}) {
+    // Spread opts FIRST, then set headers/body. The previous order let any
+    // caller-provided headers (e.g. Authorization on updateMe/deleteMe) wipe
+    // out the Content-Type we set above, making FastAPI reject the body.
     const res = await fetch(base() + path, {
-      headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
       ...opts,
+      headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
       body: opts.body ? JSON.stringify(opts.body) : undefined,
     });
     if (!res.ok) {

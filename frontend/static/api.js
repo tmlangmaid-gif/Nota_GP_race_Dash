@@ -3,9 +3,11 @@
 async function api(path, opts = {}) {
   const base = window.API_BASE || "";
   const authHeaders = (window.Auth && Auth.authHeader) ? Auth.authHeader() : {};
+  // Spread opts BEFORE setting headers/body so a caller-provided `headers`
+  // doesn't wipe Content-Type. (Same trap as auth.js.)
   const res = await fetch(base + path, {
-    headers: { "Content-Type": "application/json", ...authHeaders, ...(opts.headers || {}) },
     ...opts,
+    headers: { "Content-Type": "application/json", ...authHeaders, ...(opts.headers || {}) },
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
   if (res.status === 401) {
