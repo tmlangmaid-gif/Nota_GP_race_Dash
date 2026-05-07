@@ -1561,7 +1561,26 @@ document.addEventListener("change", async (e) => {
 // Boot
 // ---------------------------------------------------------------------------
 
+function showLoadingBanner(title, detail = "") {
+  const b = document.getElementById("dashboard-loading-banner");
+  if (!b) return;
+  document.getElementById("dashboard-loading-title").textContent = title;
+  document.getElementById("dashboard-loading-detail").textContent = detail;
+  b.style.display = "flex";
+}
+function hideLoadingBanner() {
+  const b = document.getElementById("dashboard-loading-banner");
+  if (b) b.style.display = "none";
+}
+
+function maybeHideLoadingBannerOnData() {
+  // Hide the banner once we've seen at least one car/lap, OR if the user
+  // is a read-only viewer and the event has no URL anyway.
+  if (vehicles.length > 0 || laps.length > 0) hideLoadingBanner();
+}
+
 (async () => {
+  showLoadingBanner("Loading dashboard…", "Fetching event details and any existing lap data.");
   currentUser = await Auth.requireAuth();
   await renderUserBar(currentUser);
   // Wire the Competitors and Quick view links to the same event id.
@@ -1572,6 +1591,7 @@ document.addEventListener("change", async (e) => {
   try {
     await loadAll();
   } catch (err) {
+    hideLoadingBanner();
     if (err.status === 404) {
       alert("This event no longer exists, or you don't have access.");
       location.replace("/");
@@ -1580,5 +1600,38 @@ document.addEventListener("change", async (e) => {
     alert("Failed to load dashboard: " + err.message);
     return;
   }
-  setInterval(tick, REFRESH_MS);
+
+  // Auto-start tracking. Skips when:
+  //   * read-only members (can't start anyway)
+  //   * event has no Natsoft URL set yet
+  //   * already tracking
+  const canWrite = event_.role !== "read";
+  if (canWrite && event_.natsoft_url && !event_.is_tracking) {
+    showLoadingBanner(
+      "Starting tracker…",
+      "Headless browser is connecting to Natsoft. First laps usually appear within ~15s."
+    );
+    try {
+      await API.startTracking(EVENT_ID);
+      await loadAll();
+    } catch (err) {
+      hideLoadingBanner();
+      console.warn("Auto-start failed:", err);
+    }
+  }
+
+  // Switch the banner to "waiting for first laps" if tracking started but no data yet.
+  if (event_.is_tracking && vehicles.length === 0 && laps.length === 0) {
+    showLoadingBanner(
+      "Waiting for first laps…",
+      "Scraper is polling Natsoft every 3 seconds. Cars appear here as soon as the live timing reports any lap."
+    );
+  } else {
+    hideLoadingBanner();
+  }
+
+  setInterval(async () => {
+    await tick();
+    maybeHideLoadingBannerOnData();
+  }, REFRESH_MS);
 })();

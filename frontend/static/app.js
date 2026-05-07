@@ -77,8 +77,15 @@ const MeetingPicker = (function () {
     const list = document.getElementById("meeting-picker-list");
     const discipline = parseInt(document.getElementById("meeting-discipline").value, 10);
     status.style.color = "var(--muted)";
-    status.textContent = "Loading meetings from Natsoft… (~10s)";
-    list.innerHTML = `<div class="muted" style="padding: 14px;">Fetching the meeting list. This launches a headless browser on the server, so the first request takes ~10 seconds.</div>`;
+    status.innerHTML = `<span class="spinner"></span>Loading meetings…`;
+    list.innerHTML = `
+      <div class="muted" style="padding: 24px; display: flex; align-items: center; gap: 12px;">
+        <span class="spinner lg"></span>
+        <div>
+          <div><strong>Fetching the meeting list from Natsoft.</strong></div>
+          <div style="font-size: 12px; margin-top: 4px;">First request takes ~10s while the server warms up its headless browser.</div>
+        </div>
+      </div>`;
     try {
       _meetings = await API.natsoftMeetings(discipline);
       status.textContent = `${_meetings.length} meetings`;
@@ -139,7 +146,7 @@ document.addEventListener("click", async (e) => {
     const name = pick.dataset.name;
     const status = document.getElementById("meeting-picker-status");
     status.style.color = "var(--muted)";
-    status.textContent = `Resolving "${name}"…`;
+    status.innerHTML = `<span class="spinner"></span>Resolving "${escapeHtml(name)}"…`;
     try {
       const res = await API.natsoftResolve({ discipline, slot });
       document.getElementById("natsoft-url").value = res.url;
