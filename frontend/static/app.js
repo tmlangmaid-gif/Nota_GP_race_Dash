@@ -17,10 +17,18 @@ async function refresh() {
     const publicBadge = ev.is_public
       ? '<span class="tag" style="background:rgba(102,209,138,0.10);color:var(--accent-2);border-color:var(--accent-2)">public</span>'
       : "";
+    // Paywall state. Owner sees "payment due" so they know they need to pay;
+    // members see "locked" since they can't pay on the owner's behalf.
+    // Paid events get a subtle green "paid" badge so the unlock is visible at a glance.
     const isOwner = role === "owner";
+    const paidBadge = ev.is_paid
+      ? '<span class="tag" style="background:rgba(102,209,138,0.10);color:var(--accent-2);border-color:var(--accent-2)">paid ✓</span>'
+      : (isOwner
+          ? '<span class="tag" style="background:rgba(255,104,104,0.10);color:var(--bad);border-color:var(--bad)">payment due</span>'
+          : '<span class="tag" style="background:rgba(255,104,104,0.10);color:var(--bad);border-color:var(--bad)">locked</span>');
     li.innerHTML = `
       <div>
-        <div><strong>${escapeHtml(ev.name)}</strong> ${status} ${roleBadge} ${publicBadge}</div>
+        <div><strong>${escapeHtml(ev.name)}</strong> ${status} ${roleBadge} ${publicBadge} ${paidBadge}</div>
         <div class="muted" style="font-size:12px">
           ${ev.natsoft_url ? escapeHtml(ev.natsoft_url) : "<em>no URL set</em>"}
           ${ev.our_vehicle_number ? ` • our car: <strong>#${escapeHtml(ev.our_vehicle_number)}</strong>` : ""}
