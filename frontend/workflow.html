@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <title>Race Dash — How it works</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="/static/theme.js"></script>
   <link rel="stylesheet" href="/static/styles.css" />
   <style>
     .wf-section { margin-bottom: 28px; }
@@ -184,19 +185,60 @@ flowchart LR
   <script src="/static/header-bar.js"></script>
   <script type="module">
     import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
-    mermaid.initialize({
-      startOnLoad: true,
-      theme: "dark",
-      themeVariables: {
-        background: "#181c23",
-        primaryColor: "#1f242d",
-        primaryTextColor: "#e6e8ee",
-        primaryBorderColor: "#2a3140",
-        lineColor: "#8b93a7",
-        textColor: "#e6e8ee",
-      },
-      flowchart: { curve: "basis", padding: 20 },
+
+    // Stash the original Mermaid source for each diagram so we can re-render
+    // when the user toggles the theme.
+    const sources = new Map();
+    document.querySelectorAll(".mermaid").forEach((el, i) => {
+      el.dataset.idx = String(i);
+      sources.set(i, el.textContent);
     });
+
+    function isLight() { return document.documentElement.classList.contains("light"); }
+
+    function applyTheme() {
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: isLight() ? "default" : "dark",
+        themeVariables: isLight()
+          ? {
+              background: "#ffffff",
+              primaryColor: "#eef0f5",
+              primaryTextColor: "#1a1d24",
+              primaryBorderColor: "#d8dde6",
+              lineColor: "#5b6473",
+              textColor: "#1a1d24",
+            }
+          : {
+              background: "#181c23",
+              primaryColor: "#1f242d",
+              primaryTextColor: "#e6e8ee",
+              primaryBorderColor: "#2a3140",
+              lineColor: "#8b93a7",
+              textColor: "#e6e8ee",
+            },
+        flowchart: { curve: "basis", padding: 20 },
+      });
+    }
+
+    async function renderAll() {
+      applyTheme();
+      const els = document.querySelectorAll(".mermaid");
+      for (const el of els) {
+        const idx = Number(el.dataset.idx);
+        const src = sources.get(idx);
+        if (!src) continue;
+        try {
+          const { svg } = await mermaid.render("mermaid-" + idx + "-" + Date.now(), src);
+          el.innerHTML = svg;
+        } catch (e) {
+          el.textContent = "Diagram failed to render: " + e.message;
+        }
+      }
+    }
+
+    renderAll();
+    window.addEventListener("rd-theme-change", renderAll);
   </script>
   <script>
     (async () => {

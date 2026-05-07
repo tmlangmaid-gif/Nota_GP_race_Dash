@@ -1,4 +1,5 @@
 :root {
+  /* Default = dark theme. */
   --bg: #0f1115;
   --panel: #181c23;
   --panel-2: #1f242d;
@@ -11,6 +12,36 @@
   --bad: #ff6868;
   --us: #ffd24a;
 }
+
+/* Light theme — activated by setting `class="light"` on <html>.
+   theme.js applies the saved preference before CSS evaluates, so users
+   on light mode never see a flash of dark. */
+html.light {
+  --bg: #f5f6fa;
+  --panel: #ffffff;
+  --panel-2: #eef0f5;
+  --border: #d8dde6;
+  --text: #1a1d24;
+  --muted: #5b6473;
+  --accent: #2f7bff;
+  --accent-2: #2a9d5b;
+  --warn: #b8770f;
+  --bad: #d64545;
+  --us: #b8881e;
+}
+
+/* Theme toggle button in the page header, injected by theme.js. */
+#theme-toggle {
+  font-size: 14px;
+  padding: 4px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  cursor: pointer;
+  line-height: 1;
+}
+#theme-toggle:hover { filter: brightness(1.1); }
 
 * { box-sizing: border-box; }
 
