@@ -176,16 +176,108 @@
     const p = new URLSearchParams(location.search);
     const paid = p.get("paid");
     if (!paid) return;
+    const eventId = parseInt(p.get("event"), 10) || null;
     // Strip the paid/session_id params from the URL bar so a refresh doesn't
-    // re-show the toast.
+    // re-show the toast or invite modal.
     p.delete("paid"); p.delete("session_id");
     const cleanQs = p.toString();
     history.replaceState(null, "", location.pathname + (cleanQs ? "?" + cleanQs : ""));
     if (paid === "1") {
       suppressArm = true;
       toast("Payment received — you're in.", "good");
+      // Strike while the iron is hot — open the team-invite modal so they
+      // can share access with their crew right away.
+      if (eventId) setTimeout(() => showInviteTeamModal(eventId), 700);
     } else if (paid === "cancelled") {
       toast("Checkout cancelled. You can try again any time.", "warn");
+    }
+  }
+
+  // Post-payment "invite your team" modal. Reuses the existing /members
+  // endpoint — invitees must already have a Race Dash account.
+  function showInviteTeamModal(eventId) {
+    let el = document.getElementById("invite-team-modal");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "invite-team-modal";
+      el.className = "modal-backdrop";
+      el.innerHTML = `
+        <div class="modal" style="max-width: 520px;">
+          <h2 style="margin-top:0;">Invite your team</h2>
+          <p style="color: var(--muted); font-size: 14px;">
+            You've unlocked this event for everyone you share it with.
+            Add teammates' emails below — when they log in, this event will
+            appear on their dashboard.
+          </p>
+          <p style="color: var(--muted); font-size: 12px;">
+            They need a Race Dash account first. <strong>Read only</strong> lets
+            them watch live laps; <strong>Can edit</strong> also lets them
+            assign drivers and add notes.
+          </p>
+          <div class="row" style="margin-top: 14px;">
+            <input type="email" id="invite-email-input" placeholder="someone@example.com" style="flex:1" autocomplete="off" />
+            <select id="invite-role">
+              <option value="read">Read only</option>
+              <option value="write">Can edit</option>
+            </select>
+            <button id="invite-add-btn">Add</button>
+          </div>
+          <div id="invite-msg" class="muted" style="font-size: 12px; min-height: 1em; margin-top: 4px;"></div>
+          <div id="invite-list" style="margin-top: 8px;"></div>
+          <div class="row" style="justify-content: flex-end; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border);">
+            <button id="invite-done-btn" class="primary">Done</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(el);
+
+      document.getElementById("invite-add-btn").addEventListener("click", () => onInviteAdd(eventId));
+      document.getElementById("invite-email-input").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); onInviteAdd(eventId); }
+      });
+      document.getElementById("invite-done-btn").addEventListener("click", () => {
+        el.style.display = "none";
+      });
+    }
+    el.style.display = "flex";
+    setTimeout(() => document.getElementById("invite-email-input")?.focus(), 50);
+  }
+
+  async function onInviteAdd(eventId) {
+    const input = document.getElementById("invite-email-input");
+    const select = document.getElementById("invite-role");
+    const msg = document.getElementById("invite-msg");
+    const btn = document.getElementById("invite-add-btn");
+    const list = document.getElementById("invite-list");
+    const email = (input.value || "").trim();
+    if (!email) {
+      msg.style.color = "var(--muted)";
+      msg.textContent = "Enter an email first.";
+      return;
+    }
+    btn.disabled = true;
+    msg.textContent = "";
+    try {
+      const m = await API.addMember(eventId, { email, role: select.value });
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px;";
+      const safeEmail = String(m.email).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+      const roleLabel = m.role === "write" ? "Can edit" : "Read only";
+      row.innerHTML = `<span>${safeEmail}</span><span class="muted">${roleLabel} &middot; invited ✓</span>`;
+      list.appendChild(row);
+      input.value = "";
+      input.focus();
+    } catch (err) {
+      msg.style.color = "var(--bad, #e74c3c)";
+      if (err.status === 404) {
+        msg.textContent = "No Race Dash account with that email yet — ask them to sign up first, then add them.";
+      } else if (err.status === 409) {
+        msg.textContent = "That person already has access to this event.";
+      } else {
+        msg.textContent = "Couldn't add: " + (err.message || err);
+      }
+    } finally {
+      btn.disabled = false;
     }
   }
 
