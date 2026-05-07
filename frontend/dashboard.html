@@ -18,6 +18,7 @@
     <div class="row">
       <a id="compressed-link"><button class="icon-btn">Quick view</button></a>
       <a id="competitors-link"><button class="icon-btn">Competitors</button></a>
+      <a id="activity-link"><button class="icon-btn">Activity</button></a>
       <button id="track-btn" class="primary">Start tracking</button>
       <button id="event-settings-btn" class="icon-btn">Event settings</button>
       <span style="color: var(--border); margin: 0 4px;">|</span>
@@ -97,25 +98,6 @@
         </table>
       </div>
     </section>
-
-    <details class="panel" id="scraper-activity-panel">
-      <summary style="cursor: pointer; list-style: revert;">
-        <span style="font-size:14px; text-transform:uppercase; letter-spacing:0.05em; color: var(--muted);">
-          Scraper activity
-        </span>
-        <span class="muted" style="font-size: 12px; margin-left: 8px;">click to expand</span>
-      </summary>
-      <div class="muted" style="font-size:12px; margin: 6px 0;">
-        Recent activity from the live scraper, newest first. Useful to confirm
-        the scraper is alive even when no laps are coming in.
-      </div>
-      <div id="scraper-activity-wrap" style="max-height: 280px; overflow:auto; font-family: ui-monospace, monospace; font-size: 12px;">
-        <table id="scraper-activity-table" style="width: 100%;">
-          <thead><tr><th style="width: 90px;">Time</th><th style="width: 60px;">Level</th><th>Message</th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </details>
 
     <section class="panel">
       <h2>Leaderboard</h2>

@@ -5,6 +5,7 @@ async function renderUserBar(user) {
   if (!wrap) return;
   wrap.innerHTML = `
     <span class="muted" style="font-size: 13px;">${escapeHtmlSafe(user.email)}</span>
+    <a href="/workflow"><button class="icon-btn" title="How Race Dash works">How it works</button></a>
     <a href="/settings"><button class="icon-btn">Settings</button></a>
     <button class="icon-btn" id="logout-btn">Log out</button>
   `;

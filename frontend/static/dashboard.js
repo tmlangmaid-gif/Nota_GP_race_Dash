@@ -861,39 +861,6 @@ function renderAllLapsFeed() {
   if (savedScroll > 0 && wrap) wrap.scrollTop = savedScroll;
 }
 
-async function renderScraperActivity() {
-  const panel = document.getElementById("scraper-activity-panel");
-  if (!panel || !panel.open) return;   // only fetch when the user has it expanded
-  let rows;
-  try {
-    rows = await API.scraperLogs(EVENT_ID, 80);
-  } catch (err) {
-    return;
-  }
-  const tbody = document.querySelector("#scraper-activity-table tbody");
-  if (!tbody) return;
-  if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="3" class="muted">No activity yet — start tracking to see scraper events.</td></tr>`;
-    return;
-  }
-  const wrap = document.getElementById("scraper-activity-wrap");
-  const savedScroll = wrap ? wrap.scrollTop : 0;
-  tbody.innerHTML = rows.map((r) => {
-    const t = new Date(r.ts);
-    const time = t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-    const levelColor = r.level === "error" ? "var(--bad)" :
-                       r.level === "warn"  ? "var(--warn)" :
-                       "var(--accent-2)";
-    return `
-      <tr>
-        <td style="color: var(--muted); font-variant-numeric: tabular-nums;">${time}</td>
-        <td style="color: ${levelColor}; text-transform: uppercase; font-weight: 600;">${escapeHtml(r.level)}</td>
-        <td>${escapeHtml(r.message)}</td>
-      </tr>`;
-  }).join("");
-  if (wrap && savedScroll > 0) wrap.scrollTop = savedScroll;
-}
-
 function renderLeaderboard(rows) {
   const tbody = $("#leaderboard tbody");
   const tracked = trackedVehicles();
@@ -967,7 +934,6 @@ function renderAll(leaderboardRows, opts = {}) {
     renderCarColumns();
   }
   renderAllLapsFeed();
-  renderScraperActivity();   // best-effort, no-ops when collapsed
   renderLeaderboard(leaderboardRows);
 }
 
@@ -1583,11 +1549,13 @@ function maybeHideLoadingBannerOnData() {
   showLoadingBanner("Loading dashboard…", "Fetching event details and any existing lap data.");
   currentUser = await Auth.requireAuth();
   await renderUserBar(currentUser);
-  // Wire the Competitors and Quick view links to the same event id.
+  // Wire the per-event header links.
   const compLink = document.getElementById("competitors-link");
   if (compLink) compLink.href = `/competitors?event=${EVENT_ID}`;
   const quickLink = document.getElementById("compressed-link");
   if (quickLink) quickLink.href = `/compressed?event=${EVENT_ID}`;
+  const activityLink = document.getElementById("activity-link");
+  if (activityLink) activityLink.href = `/scraper-activity?event=${EVENT_ID}`;
   try {
     await loadAll();
   } catch (err) {

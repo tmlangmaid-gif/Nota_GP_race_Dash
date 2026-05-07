@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Race Dash — Scraper activity</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="row">
+      <a id="back-link">←</a>
+      <h1 id="event-name">…</h1>
+      <span class="tag">scraper activity</span>
+    </div>
+    <div class="row">
+      <span style="color: var(--border); margin: 0 4px;">|</span>
+      <span id="user-bar" class="row" style="gap: 8px;"></span>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel">
+      <div class="muted" style="font-size: 13px; margin-bottom: 8px;">
+        Live feed of what the scraper is doing — useful to confirm it's alive
+        even when no new lap times are landing. Refreshes every 3 seconds.
+      </div>
+      <div class="row" style="margin-bottom: 6px;">
+        <span id="status-pill" class="tag idle">…</span>
+        <span class="muted" style="font-size: 12px;">Newest activity at the top.</span>
+      </div>
+      <div id="scraper-activity-wrap" style="max-height: 70vh; overflow:auto; font-family: ui-monospace, monospace; font-size: 13px;">
+        <table id="scraper-activity-table" style="width: 100%;">
+          <thead><tr><th style="width: 100px;">Time</th><th style="width: 70px;">Level</th><th>Message</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/config.js"></script>
+  <script src="/static/auth.js"></script>
+  <script src="/static/api.js"></script>
+  <script src="/static/header-bar.js"></script>
+  <script src="/static/scraper-activity.js"></script>
+</body>
+</html>

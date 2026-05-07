@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Race Dash — How it works</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="/static/styles.css" />
+  <style>
+    .wf-section { margin-bottom: 28px; }
+    .wf-section h2 { margin-top: 0; font-size: 20px; }
+    .wf-section .lead { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .mermaid {
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      text-align: center;
+      overflow-x: auto;
+    }
+    .legend { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin-top: 12px; font-size: 13px; }
+    .legend .k { color: var(--muted); }
+    .legend .v strong { color: var(--text); }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="row">
+      <a href="/">←</a>
+      <h1>How Race Dash works</h1>
+    </div>
+    <div class="row">
+      <span style="color: var(--border); margin: 0 4px;">|</span>
+      <span id="user-bar" class="row" style="gap: 8px;"></span>
+    </div>
+  </header>
+
+  <main style="max-width: 1100px;">
+
+    <section class="panel wf-section">
+      <h2>📡 Live tracking — what happens during a race</h2>
+      <div class="lead">
+        From the moment you open the dashboard to the laps appearing on screen.
+        Every arrow is a real network hop.
+      </div>
+      <div class="mermaid">
+flowchart TB
+  Browser["📱 Your browser<br/>(phone, laptop, iPad)"]
+  Frontend["▲ Vercel<br/>static frontend<br/>(HTML, JS, CSS)"]
+  Traefik["🔒 Traefik<br/>HTTPS proxy on the VPS"]
+  Backend["⚙️ FastAPI backend<br/>auth, events, laps API"]
+  DB[("🗄 Postgres<br/>users · events · laps · drivers")]
+  Scraper["🤖 Headless Chromium<br/>(scraper, polls every 3s)"]
+  Natsoft["🏁 Natsoft live timing<br/>racing.natsoft.com.au"]
+
+  Browser -->|"1. loads page (HTTPS)"| Frontend
+  Browser -->|"2. JSON API calls (HTTPS)"| Traefik
+  Traefik --> Backend
+  Backend <--> DB
+  Backend -.->|3. spawns one per tracked event| Scraper
+  Scraper -->|"4. opens iframe URL,<br/>reads the rendered DOM"| Natsoft
+  Natsoft -.->|"5. live timing data<br/>(positioned divs, no tables)"| Scraper
+  Scraper -->|"6. upserts laps"| DB
+  Browser -->|"7. polls /api/events/.../laps every 3s"| Traefik
+
+  classDef external fill:#1abc9c20,stroke:#1abc9c,color:#e6e8ee;
+  classDef vps fill:#4f9dff20,stroke:#4f9dff,color:#e6e8ee;
+  classDef store fill:#f1c40f20,stroke:#f1c40f,color:#e6e8ee;
+  classDef user fill:#9b59b620,stroke:#9b59b6,color:#e6e8ee;
+  class Browser user;
+  class Frontend external;
+  class Traefik,Backend,Scraper vps;
+  class DB store;
+  class Natsoft external;
+      </div>
+      <dl class="legend">
+        <dt class="k">Vercel</dt>
+        <dd class="v"><strong>Free</strong> — hosts only the static HTML/JS/CSS.
+          Auto-deploys whenever I <code>git push</code> a frontend change.</dd>
+        <dt class="k">Hostinger VPS</dt>
+        <dd class="v"><strong>Your existing server</strong> — runs three Docker containers
+          (Traefik for HTTPS, Postgres, and our backend with the headless Chromium scraper).</dd>
+        <dt class="k">Natsoft</dt>
+        <dd class="v">Their live-timing widget loads at
+          <code>http://server.natsoft.com.au:8080/LiveMeeting/&lt;date&gt;.&lt;venue&gt;</code>.
+          Our scraper opens it in headless Chromium and reads cars + lap times out of the rendered DOM.</dd>
+        <dt class="k">Postgres</dt>
+        <dd class="v">Stores users, events, drivers, all lap times, tyre stints,
+          and event sharing. Stays on the VPS — we never reach in from the browser.</dd>
+      </dl>
+    </section>
+
+    <section class="panel wf-section">
+      <h2>🚀 Deployment — how code changes become a live update</h2>
+      <div class="lead">
+        Two auto-deploy paths so neither of us has to manually copy files anywhere.
+      </div>
+      <div class="mermaid">
+flowchart LR
+  Dev["💻 Developer laptop<br/>(VS Code + git)"]
+  GH["🐙 GitHub repo<br/>tmlangmaid-gif/Nota_GP_race_Dash"]
+  Vercel["▲ Vercel"]
+  GHA["⚙️ GitHub Actions<br/>(deploy-backend.yml)"]
+  VPS["🖥 Hostinger VPS<br/>git pull + docker rebuild"]
+
+  Dev -->|"git push"| GH
+  GH -->|"frontend/** changed → auto-deploy"| Vercel
+  GH -->|"backend/** or compose changed"| GHA
+  GHA -->|"SSH (ed25519 key)<br/>then 'docker compose up -d --build'"| VPS
+
+  classDef dev fill:#9b59b620,stroke:#9b59b6,color:#e6e8ee;
+  classDef src fill:#e74c3c20,stroke:#e74c3c,color:#e6e8ee;
+  classDef ext fill:#1abc9c20,stroke:#1abc9c,color:#e6e8ee;
+  classDef vps fill:#4f9dff20,stroke:#4f9dff,color:#e6e8ee;
+  class Dev dev;
+  class GH src;
+  class Vercel,GHA ext;
+  class VPS vps;
+      </div>
+      <dl class="legend">
+        <dt class="k">Frontend changes</dt>
+        <dd class="v">Anything in <code>frontend/</code> → Vercel rebuilds automatically (~30s).
+          You just hard-refresh the browser.</dd>
+        <dt class="k">Backend changes</dt>
+        <dd class="v">Anything in <code>backend/</code> or <code>docker-compose.prod.yml</code>
+          → GitHub Actions SSHes into the VPS and runs <code>docker compose up -d --build</code> (~90s).</dd>
+        <dt class="k">Why it's safe</dt>
+        <dd class="v">The deploy SSH key is stored as a GitHub secret. Only pushes
+          to your repo trigger the action. Any other secrets (Postgres password,
+          Resend API key, etc.) live only on the VPS in <code>.env</code>.</dd>
+      </dl>
+    </section>
+
+    <section class="panel wf-section">
+      <h2>📦 What's stored where</h2>
+      <div class="lead">A quick "where does X live" reference.</div>
+      <table>
+        <thead>
+          <tr><th>Thing</th><th>Where</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Source code</td>
+            <td><a href="https://github.com/tmlangmaid-gif/Nota_GP_race_Dash" target="_blank">github.com/tmlangmaid-gif/Nota_GP_race_Dash</a></td>
+            <td>Public repo. The dashboard you're looking at right now is built from this code.</td>
+          </tr>
+          <tr>
+            <td>Frontend (HTML/JS/CSS)</td>
+            <td>Vercel</td>
+            <td><code>nota-gp-race-dash.vercel.app</code>. Free, auto-deploys from GitHub.</td>
+          </tr>
+          <tr>
+            <td>Backend API + scraper</td>
+            <td>Hostinger VPS</td>
+            <td><code>racedash.srv1595222.hstgr.cloud</code>. Container <code>racedash-backend</code>.</td>
+          </tr>
+          <tr>
+            <td>Database</td>
+            <td>Hostinger VPS</td>
+            <td>Postgres in container <code>racedash-db</code>. Data persists in a Docker volume.</td>
+          </tr>
+          <tr>
+            <td>HTTPS cert</td>
+            <td>Hostinger VPS (Traefik)</td>
+            <td>Let's Encrypt, auto-renewed.</td>
+          </tr>
+          <tr>
+            <td>Email sender</td>
+            <td>Resend (free tier)</td>
+            <td>Used only for password-reset emails. API key in VPS <code>.env</code>.</td>
+          </tr>
+          <tr>
+            <td>Secrets (passwords, keys)</td>
+            <td>VPS <code>.env</code> + GitHub secrets</td>
+            <td>Never in the repo. <code>.env</code> is on the VPS only; deploy SSH key is encrypted in GitHub.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+  </main>
+
+  <script src="/static/config.js"></script>
+  <script src="/static/auth.js"></script>
+  <script src="/static/header-bar.js"></script>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: "dark",
+      themeVariables: {
+        background: "#181c23",
+        primaryColor: "#1f242d",
+        primaryTextColor: "#e6e8ee",
+        primaryBorderColor: "#2a3140",
+        lineColor: "#8b93a7",
+        textColor: "#e6e8ee",
+      },
+      flowchart: { curve: "basis", padding: 20 },
+    });
+  </script>
+  <script>
+    (async () => {
+      try {
+        const me = await Auth.me();
+        await renderUserBar(me);
+      } catch {
+        // Workflow page is viewable even without auth — just hide the user bar.
+      }
+    })();
+  </script>
+</body>
+</html>

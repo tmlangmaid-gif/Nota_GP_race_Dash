@@ -1026,6 +1026,14 @@ if FRONTEND_DIR.exists():
     def compressed_page():
         return FileResponse(FRONTEND_DIR / "compressed.html")
 
+    @app.get("/scraper-activity")
+    def scraper_activity_page():
+        return FileResponse(FRONTEND_DIR / "scraper-activity.html")
+
+    @app.get("/workflow")
+    def workflow_page():
+        return FileResponse(FRONTEND_DIR / "workflow.html")
+
     @app.get("/forgot-password")
     def forgot_password_page():
         return FileResponse(FRONTEND_DIR / "forgot-password.html")
