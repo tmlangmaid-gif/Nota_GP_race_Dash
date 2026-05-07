@@ -194,7 +194,6 @@ function renderColumnHeaderHTML(slot, tc) {
         <div class="muted" style="font-size:12px;">no car selected</div>
       </div>`;
   }
-  const desc = tc.description ? escapeHtml(tc.description) : "";
   // Show the user-given name prominently (e.g. "BMW") with the car number as
   // a subtle annotation. Falls back to "Car #N" when there's no name.
   const titleHTML = tc.name
@@ -204,7 +203,6 @@ function renderColumnHeaderHTML(slot, tc) {
     <div class="car-col-header">
       <div class="slot-label">SLOT ${slot}</div>
       ${titleHTML}
-      ${desc ? `<div class="car-desc">${desc}</div>` : ""}
     </div>`;
 }
 
@@ -358,12 +356,6 @@ function renderSlotCardHTML(slot, tc) {
         <input type="text" class="tracked-name" data-tracked="${tc.id}"
                value="${escapeHtml(tc.name || "")}"
                placeholder="e.g. 'BMW' or 'Red Beast'" style="flex:1; min-width: 140px;" />
-      </div>
-      <div class="row">
-        <label>Description</label>
-        <input type="text" class="tracked-description" data-tracked="${tc.id}"
-               value="${escapeHtml(tc.description || "")}"
-               placeholder="optional, e.g. 'Race Tyre Test'" style="flex:1; min-width: 160px;" />
       </div>
       <div class="row">
         <label>Current driver</label>
@@ -927,10 +919,9 @@ function renderAll(leaderboardRows, opts = {}) {
   // wipe their text mid-typing.
   const ae = document.activeElement;
   const editingNote = ae?.classList?.contains("lap-note-input");
-  const editingDesc = ae?.classList?.contains("tracked-description");
   const editingCarName = ae?.classList?.contains("tracked-name");
   const editingNewDriver = ae?.classList?.contains("new-car-driver-input");
-  if (!opts.skipCarColumnsIfEditingNote || (!editingNote && !editingDesc && !editingCarName && !editingNewDriver)) {
+  if (!opts.skipCarColumnsIfEditingNote || (!editingNote && !editingCarName && !editingNewDriver)) {
     renderCarColumns();
   }
   renderAllLapsFeed();
@@ -1255,17 +1246,6 @@ document.addEventListener("change", async (e) => {
       await loadAll();
     } catch (err) {
       alert("Update current driver failed: " + err.message);
-    }
-    return;
-  }
-  // Description (saved on commit — change fires on blur or Enter)
-  if (e.target.classList.contains("tracked-description")) {
-    const id = e.target.dataset.tracked;
-    try {
-      await API.updateTracked(id, { description: e.target.value });
-      await loadAll();
-    } catch (err) {
-      alert("Update description failed: " + err.message);
     }
     return;
   }
