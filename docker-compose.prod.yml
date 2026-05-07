@@ -45,7 +45,12 @@ services:
       PORT: "8000"
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.racedash.rule=Host(`${RACEDASH_HOST:?RACEDASH_HOST is required}`)"
+      # Accept both the new api.speeddemondash.com hostname AND the legacy
+      # Hostinger-provided racedash.srv1595222.hstgr.cloud during migration,
+      # so old bookmarks / Stripe webhook URLs keep working until everything
+      # is moved over. Drop the legacy host from this rule once the cutover
+      # is fully complete.
+      - "traefik.http.routers.racedash.rule=Host(`${RACEDASH_HOST:?RACEDASH_HOST is required}`,`racedash.srv1595222.hstgr.cloud`)"
       - "traefik.http.routers.racedash.entrypoints=websecure"
       - "traefik.http.routers.racedash.tls.certresolver=letsencrypt"
       - "traefik.http.services.racedash.loadbalancer.server.port=8000"
