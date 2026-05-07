@@ -36,8 +36,7 @@
         <div id="paywall-owner-body" style="display:none">
           <p style="color: var(--muted); font-size: 14px;">
             Race Dash is <strong>$20 AUD per event</strong>.
-            One-off payment — covers the whole race weekend, for you and everyone
-            you've shared this event with.
+            One-off payment — unlocks this event for you and everyone you share it with.
           </p>
           <button id="paywall-pay-btn" class="primary" style="width:100%; padding:12px; font-size:15px; margin-top: 6px;">
             Pay $20 AUD with card
