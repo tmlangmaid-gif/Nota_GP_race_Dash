@@ -17,15 +17,15 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .db import Base, engine, ensure_column, get_db, SessionLocal
-from .email_sender import send_password_reset_email
+from .email_sender import send_event_invite_email, send_password_reset_email
 from .natsoft_browser import browser as natsoft_browser
-from .models import AuthToken, Driver, Event, EventMember, Lap, PasswordResetToken, ScraperLog, TrackedCar, User
+from .models import AuthToken, Driver, Event, EventInvite, EventMember, Lap, PasswordResetToken, ScraperLog, TrackedCar, User
 from . import stripe_paywall
 from .schemas import (
     AuthResponse,
     DriverCreate, DriverOut, DriverUpdate,
     EventCreate, EventOut, EventUpdate,
-    EventMemberCreate, EventMemberOut, EventMemberUpdate,
+    EventMemberCreate, EventMemberOut, EventMembershipOut, EventMemberUpdate,
     ForgotPasswordRequest,
     LapOut, LapUpdate,
     LeaderboardRow,
@@ -232,6 +232,36 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
+
+    # Auto-claim any pending invites for this email — they're upgraded to real
+    # EventMember rows so the new user lands on the home page already a member
+    # of every event they were invited to before signing up.
+    pending = db.execute(
+        select(EventInvite).where(EventInvite.email == email)
+    ).scalars().all()
+    for inv in pending:
+        ev = db.get(Event, inv.event_id)
+        # Skip if event is gone (cascade should've cleaned this up, but defensive).
+        # Skip if the new user happens to already be the event owner — shouldn't
+        # be possible since they just signed up, but be safe.
+        if ev is None or ev.user_id == user.id:
+            db.delete(inv)
+            continue
+        already = db.execute(
+            select(EventMember).where(
+                EventMember.event_id == inv.event_id,
+                EventMember.user_id == user.id,
+            )
+        ).scalar_one_or_none()
+        if not already:
+            db.add(EventMember(event_id=inv.event_id, user_id=user.id, role=inv.role))
+        db.delete(inv)
+    if pending:
+        db.commit()
+        logging.getLogger("invite").info(
+            "Auto-claimed %d pending invite(s) for %s", len(pending), email
+        )
+
     token = gen_token()
     db.add(AuthToken(token=token, user_id=user.id))
     db.commit()
@@ -534,66 +564,126 @@ async def stop_tracking(
 # Event sharing (members)
 # ---------------------------------------------------------------------------
 
-def _member_to_out(m: EventMember, db: Session) -> EventMemberOut:
-    """Build the EventMemberOut, fetching the user's email by id."""
+def _member_to_out(m: EventMember, db: Session) -> EventMembershipOut:
+    """Unified shape: an EventMember row -> kind='member'."""
     u = db.get(User, m.user_id)
-    return EventMemberOut(
+    return EventMembershipOut(
+        kind="member",
         id=m.id,
         event_id=m.event_id,
-        user_id=m.user_id,
         email=u.email if u else "(unknown)",
         role=m.role,
+        user_id=m.user_id,
         created_at=m.created_at,
     )
 
 
-@app.get("/api/events/{event_id}/members", response_model=list[EventMemberOut])
+def _invite_to_out(inv: EventInvite) -> EventMembershipOut:
+    """Unified shape: an EventInvite row -> kind='invite' (no user_id yet)."""
+    return EventMembershipOut(
+        kind="invite",
+        id=inv.id,
+        event_id=inv.event_id,
+        email=inv.email,
+        role=inv.role,
+        user_id=None,
+        created_at=inv.created_at,
+    )
+
+
+@app.get("/api/events/{event_id}/members", response_model=list[EventMembershipOut])
 def list_event_members(
     event_id: int,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Anyone with read access can see who has access (so non-owners know who's in their team)."""
+    """Returns both actual members and pending email-invites in a single list,
+    each tagged with `kind`. Anyone with read access can see who has access."""
     get_user_event_read(event_id, user, db)
     members = db.execute(
         select(EventMember).where(EventMember.event_id == event_id).order_by(EventMember.created_at)
     ).scalars().all()
-    return [_member_to_out(m, db) for m in members]
+    invites = db.execute(
+        select(EventInvite).where(EventInvite.event_id == event_id).order_by(EventInvite.created_at)
+    ).scalars().all()
+    out: list[EventMembershipOut] = [_member_to_out(m, db) for m in members]
+    out += [_invite_to_out(i) for i in invites]
+    return out
 
 
-@app.post("/api/events/{event_id}/members", response_model=EventMemberOut)
+@app.post("/api/events/{event_id}/members", response_model=EventMembershipOut)
 def add_event_member(
     event_id: int,
     payload: EventMemberCreate,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Owner adds someone to the event by email.
+    * If that email already has a Race Dash account -> creates an EventMember row.
+    * If not -> stores an EventInvite that activates when they sign up.
+    Either way, sends them a notification email (Resend) with the right link."""
     ev = get_user_event_owner(event_id, user, db)
     role = payload.role.strip().lower()
     if role not in (ROLE_READ, ROLE_WRITE):
         raise HTTPException(400, "role must be 'read' or 'write'")
     invitee_email = normalise_email(payload.email)
     invitee = db.execute(select(User).where(User.email == invitee_email)).scalar_one_or_none()
-    if not invitee:
-        raise HTTPException(404, "no user with that email — they need to sign up first")
-    if invitee.id == ev.user_id:
-        raise HTTPException(400, "the owner already has full access")
-    existing = db.execute(
-        select(EventMember).where(
-            EventMember.event_id == event_id,
-            EventMember.user_id == invitee.id,
+
+    if invitee:
+        if invitee.id == ev.user_id:
+            raise HTTPException(400, "the owner already has full access")
+        existing = db.execute(
+            select(EventMember).where(
+                EventMember.event_id == event_id,
+                EventMember.user_id == invitee.id,
+            )
+        ).scalar_one_or_none()
+        if existing:
+            raise HTTPException(409, "this user is already a member; PATCH to change their role")
+        m = EventMember(event_id=event_id, user_id=invitee.id, role=role)
+        db.add(m)
+        db.commit()
+        db.refresh(m)
+        try:
+            send_event_invite_email(
+                to_email=invitee_email,
+                event_name=ev.name,
+                owner_email=user.email,
+                event_id=ev.id,
+                has_account=True,
+            )
+        except Exception as exc:
+            logging.getLogger("invite").exception("Failed to send invite email: %s", exc)
+        return _member_to_out(m, db)
+
+    # No account yet -> create a pending invite. The signup flow will pick this
+    # up and convert it to an EventMember automatically.
+    existing_inv = db.execute(
+        select(EventInvite).where(
+            EventInvite.event_id == event_id,
+            EventInvite.email == invitee_email,
         )
     ).scalar_one_or_none()
-    if existing:
-        raise HTTPException(409, "this user is already a member; PATCH to change their role")
-    m = EventMember(event_id=event_id, user_id=invitee.id, role=role)
-    db.add(m)
+    if existing_inv:
+        raise HTTPException(409, "an invite for that email is already pending")
+    inv = EventInvite(event_id=event_id, email=invitee_email, role=role)
+    db.add(inv)
     db.commit()
-    db.refresh(m)
-    return _member_to_out(m, db)
+    db.refresh(inv)
+    try:
+        send_event_invite_email(
+            to_email=invitee_email,
+            event_name=ev.name,
+            owner_email=user.email,
+            event_id=ev.id,
+            has_account=False,
+        )
+    except Exception as exc:
+        logging.getLogger("invite").exception("Failed to send invite email: %s", exc)
+    return _invite_to_out(inv)
 
 
-@app.patch("/api/events/{event_id}/members/{member_id}", response_model=EventMemberOut)
+@app.patch("/api/events/{event_id}/members/{member_id}", response_model=EventMembershipOut)
 def update_event_member(
     event_id: int,
     member_id: int,
@@ -626,6 +716,45 @@ def delete_event_member(
     if not m or m.event_id != event_id:
         raise HTTPException(404, "member not found")
     db.delete(m)
+    db.commit()
+    return {"ok": True}
+
+
+@app.patch("/api/events/{event_id}/invites/{invite_id}", response_model=EventMembershipOut)
+def update_event_invite(
+    event_id: int,
+    invite_id: int,
+    payload: EventMemberUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Change a pending invite's role before the recipient signs up."""
+    get_user_event_owner(event_id, user, db)
+    inv = db.get(EventInvite, invite_id)
+    if not inv or inv.event_id != event_id:
+        raise HTTPException(404, "invite not found")
+    role = payload.role.strip().lower()
+    if role not in (ROLE_READ, ROLE_WRITE):
+        raise HTTPException(400, "role must be 'read' or 'write'")
+    inv.role = role
+    db.commit()
+    db.refresh(inv)
+    return _invite_to_out(inv)
+
+
+@app.delete("/api/events/{event_id}/invites/{invite_id}")
+def delete_event_invite(
+    event_id: int,
+    invite_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Withdraw a pending invite before the recipient signs up."""
+    get_user_event_owner(event_id, user, db)
+    inv = db.get(EventInvite, invite_id)
+    if not inv or inv.event_id != event_id:
+        raise HTTPException(404, "invite not found")
+    db.delete(inv)
     db.commit()
     return {"ok": True}
 

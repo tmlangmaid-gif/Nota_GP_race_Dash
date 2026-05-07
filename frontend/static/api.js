@@ -38,11 +38,15 @@ const API = {
   startTracking: (id) => api(`/api/events/${id}/start_tracking`, { method: "POST" }),
   stopTracking: (id) => api(`/api/events/${id}/stop_tracking`, { method: "POST" }),
 
-  // event sharing
+  // event sharing — `listMembers` returns a mixed list of members and pending
+  // invites. Each row carries `kind` ('member' | 'invite'); use it to dispatch
+  // updates / deletes to the right route.
   listMembers: (eventId) => api(`/api/events/${eventId}/members`),
   addMember: (eventId, body) => api(`/api/events/${eventId}/members`, { method: "POST", body }),
   updateMember: (eventId, memberId, body) => api(`/api/events/${eventId}/members/${memberId}`, { method: "PATCH", body }),
   deleteMember: (eventId, memberId) => api(`/api/events/${eventId}/members/${memberId}`, { method: "DELETE" }),
+  updateInvite: (eventId, inviteId, body) => api(`/api/events/${eventId}/invites/${inviteId}`, { method: "PATCH", body }),
+  deleteInvite: (eventId, inviteId) => api(`/api/events/${eventId}/invites/${inviteId}`, { method: "DELETE" }),
 
   // drivers
   listDrivers: (eventId) => api(`/api/events/${eventId}/drivers`),

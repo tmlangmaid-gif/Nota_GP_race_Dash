@@ -59,6 +59,22 @@ class EventMemberOut(BaseModel):
     created_at: datetime
 
 
+class EventMembershipOut(BaseModel):
+    """Unified row for the 'Shared with' UI — represents either an actual
+    EventMember (the invitee already has an account) or a pending EventInvite
+    (they don't yet, but will auto-join on signup). Frontend uses `kind` to
+    pick which API route to call for PATCH/DELETE.
+
+    The `id` is the EventMember.id when kind='member', else the EventInvite.id."""
+    kind: str           # "member" | "invite"
+    id: int
+    event_id: int
+    email: str
+    role: str
+    user_id: int | None
+    created_at: datetime
+
+
 class EventCreate(BaseModel):
     name: str
     natsoft_url: str | None = None

@@ -1398,16 +1398,24 @@ async function refreshMembers() {
     return;
   }
   $("#members-empty").style.display = "none";
-  wrap.innerHTML = members.map((m) => `
-    <div class="member-row">
-      <span class="email">${escapeHtml(m.email)}</span>
-      <select data-act="member-role" data-member="${m.id}">
-        <option value="read"  ${m.role === "read"  ? "selected" : ""}>Read only</option>
-        <option value="write" ${m.role === "write" ? "selected" : ""}>Can edit</option>
-      </select>
-      <button class="icon-btn" data-act="remove-member" data-member="${m.id}">Remove</button>
-    </div>
-  `).join("");
+  wrap.innerHTML = members.map((m) => {
+    // Pending invites (no Race Dash account yet) get a "pending signup" tag so
+    // the owner can see the difference between someone watching and someone
+    // who hasn't joined yet.
+    const pendingTag = m.kind === "invite"
+      ? '<span class="tag idle" style="font-size:10px; padding:1px 5px; margin-left:6px;">pending signup</span>'
+      : "";
+    return `
+      <div class="member-row" data-kind="${m.kind}" data-id="${m.id}">
+        <span class="email">${escapeHtml(m.email)}${pendingTag}</span>
+        <select data-act="member-role" data-kind="${m.kind}" data-id="${m.id}">
+          <option value="read"  ${m.role === "read"  ? "selected" : ""}>Read only</option>
+          <option value="write" ${m.role === "write" ? "selected" : ""}>Can edit</option>
+        </select>
+        <button class="icon-btn" data-act="remove-member" data-kind="${m.kind}" data-id="${m.id}">Remove</button>
+      </div>
+    `;
+  }).join("");
 }
 
 $("#event-settings-btn").addEventListener("click", openEventSettings);
@@ -1475,9 +1483,17 @@ document.addEventListener("click", async (e) => {
   }
   const removeMember = e.target.closest('[data-act="remove-member"]');
   if (removeMember) {
-    if (!confirm("Remove this person from the event?")) return;
+    const kind = removeMember.dataset.kind || "member";
+    const promptText = kind === "invite"
+      ? "Withdraw this pending invite?"
+      : "Remove this person from the event?";
+    if (!confirm(promptText)) return;
     try {
-      await API.deleteMember(EVENT_ID, removeMember.dataset.member);
+      if (kind === "invite") {
+        await API.deleteInvite(EVENT_ID, removeMember.dataset.id);
+      } else {
+        await API.deleteMember(EVENT_ID, removeMember.dataset.id);
+      }
       await refreshMembers();
     } catch (err) {
       alert("Remove failed: " + err.message);
@@ -1516,8 +1532,13 @@ document.addEventListener("change", async (e) => {
   }
   const memberRoleSel = e.target.closest('[data-act="member-role"]');
   if (!memberRoleSel) return;
+  const kind = memberRoleSel.dataset.kind || "member";
   try {
-    await API.updateMember(EVENT_ID, memberRoleSel.dataset.member, { role: memberRoleSel.value });
+    if (kind === "invite") {
+      await API.updateInvite(EVENT_ID, memberRoleSel.dataset.id, { role: memberRoleSel.value });
+    } else {
+      await API.updateMember(EVENT_ID, memberRoleSel.dataset.id, { role: memberRoleSel.value });
+    }
     await refreshMembers();
   } catch (err) {
     alert("Update role failed: " + err.message);

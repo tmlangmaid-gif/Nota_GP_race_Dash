@@ -89,3 +89,83 @@ def send_password_reset_email(to_email: str, token: str) -> None:
         "text": text,
     })
     logger.info("Password reset email sent to %s", to_email)
+
+
+def send_event_invite_email(
+    to_email: str,
+    event_name: str,
+    owner_email: str,
+    event_id: int,
+    has_account: bool,
+) -> None:
+    """Email an event-invite to a teammate.
+
+    Two flavours, both end up in the same place:
+      * has_account=True  -> "you've been added, open your dashboard"
+      * has_account=False -> "you've been invited, sign up with this email and
+                              you'll see it on your dashboard automatically"
+
+    The recipient identifier is just their email, so the auto-claim on signup
+    finds the right invite without any per-email token.
+
+    Falls back to a log line if Resend isn't configured."""
+    base = frontend_base_url()
+    if has_account:
+        link = f"{base}/dashboard?event={event_id}"
+        cta = "Open your dashboard"
+        first_line = (
+            f"{owner_email} added you to <strong>{event_name}</strong> on Race Dash."
+        )
+        body_extra = (
+            "Live laps from this event are now visible on your Race Dash home page."
+        )
+    else:
+        link = f"{base}/login"
+        cta = "Sign up to Race Dash"
+        first_line = (
+            f"{owner_email} has invited you to view <strong>{event_name}</strong> on Race Dash — "
+            "a live timing dashboard for racing."
+        )
+        body_extra = (
+            f"Sign up using <strong>this email address</strong> ({to_email}) and "
+            f"you'll automatically see <strong>{event_name}</strong> on your dashboard."
+        )
+
+    api_key = os.environ.get("RESEND_API_KEY")
+    if not api_key:
+        logger.warning(
+            "RESEND_API_KEY not set — would have emailed %s about invite to event %s (%s): %s",
+            to_email, event_id, event_name, link,
+        )
+        return
+
+    from_email = os.environ.get("RESEND_FROM_EMAIL")
+    if not from_email:
+        raise RuntimeError("RESEND_FROM_EMAIL is not set on the backend")
+
+    html = (
+        f"<p>{first_line}</p>"
+        f"<p>{body_extra}</p>"
+        f'<p><a href="{link}" style="display:inline-block;padding:10px 18px;background:#2f7bff;color:#fff;border-radius:6px;text-decoration:none">{cta}</a></p>'
+        f'<p style="font-size:12px;color:#666">Or paste this link into your browser: {link}</p>'
+    )
+    text = (
+        f"{first_line.replace('<strong>','').replace('</strong>','')}\n\n"
+        f"{body_extra.replace('<strong>','').replace('</strong>','')}\n\n"
+        f"{cta}: {link}\n"
+    )
+
+    subject = (
+        f"You've been added to {event_name} on Race Dash"
+        if has_account
+        else f"{owner_email} invited you to {event_name} on Race Dash"
+    )
+
+    _post_to_resend({
+        "from": from_email,
+        "to": [to_email],
+        "subject": subject,
+        "html": html,
+        "text": text,
+    })
+    logger.info("Event-invite email sent to %s for event %s", to_email, event_id)

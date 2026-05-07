@@ -102,6 +102,27 @@ class EventMember(Base):
     )
 
 
+class EventInvite(Base):
+    """A pending invite for an email that doesn't yet have a Race Dash account.
+    When that user signs up, the signup flow looks up all invites for their
+    email and converts each one into an EventMember row, then deletes the
+    invite. Lets event owners pre-share access without their teammates needing
+    to sign up first.
+
+    Email is stored normalised (lowercased) so lookups during signup are exact."""
+    __tablename__ = "event_invites"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True)
+    email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(10), nullable=False, default="read")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("event_id", "email", name="uq_event_invite_event_email"),
+    )
+
+
 class TrackedCar(Base):
     """A vehicle that *we* are running in the event. Has a 'current driver'
     setting, so newly recorded laps for this vehicle get auto-tagged with that

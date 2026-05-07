@@ -206,13 +206,14 @@
           <h2 style="margin-top:0;">Invite your team</h2>
           <p style="color: var(--muted); font-size: 14px;">
             You've unlocked this event for everyone you share it with.
-            Add teammates' emails below — when they log in, this event will
-            appear on their dashboard.
+            Add teammates' emails below — they'll get a notification email and
+            see this event on their Race Dash dashboard.
           </p>
           <p style="color: var(--muted); font-size: 12px;">
-            They need a Race Dash account first. <strong>Read only</strong> lets
-            them watch live laps; <strong>Can edit</strong> also lets them
-            assign drivers and add notes.
+            No account yet? No problem — they'll get a sign-up link and join
+            this event automatically. <strong>Read only</strong> lets them
+            watch live laps; <strong>Can edit</strong> also lets them assign
+            drivers and add notes.
           </p>
           <div class="row" style="margin-top: 14px;">
             <input type="email" id="invite-email-input" placeholder="someone@example.com" style="flex:1" autocomplete="off" />
@@ -263,16 +264,19 @@
       row.style.cssText = "display:flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px;";
       const safeEmail = String(m.email).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
       const roleLabel = m.role === "write" ? "Can edit" : "Read only";
-      row.innerHTML = `<span>${safeEmail}</span><span class="muted">${roleLabel} &middot; invited ✓</span>`;
+      // Differentiate "they're already on Race Dash, just added them" from
+      // "no account yet, we sent them a sign-up email".
+      const status = m.kind === "invite"
+        ? "invited &middot; pending signup ✉️"
+        : "added ✓";
+      row.innerHTML = `<span>${safeEmail}</span><span class="muted">${roleLabel} &middot; ${status}</span>`;
       list.appendChild(row);
       input.value = "";
       input.focus();
     } catch (err) {
       msg.style.color = "var(--bad, #e74c3c)";
-      if (err.status === 404) {
-        msg.textContent = "No Race Dash account with that email yet — ask them to sign up first, then add them.";
-      } else if (err.status === 409) {
-        msg.textContent = "That person already has access to this event.";
+      if (err.status === 409) {
+        msg.textContent = "That person is already on the list for this event.";
       } else {
         msg.textContent = "Couldn't add: " + (err.message || err);
       }
