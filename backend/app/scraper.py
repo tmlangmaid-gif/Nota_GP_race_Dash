@@ -32,7 +32,36 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .db import SessionLocal
-from .models import Event, Lap, TrackedCar
+from .models import Event, Lap, ScraperLog, TrackedCar
+
+
+# ---------------------------------------------------------------------------
+# Scraper activity log (visible in-app, separate from logger output)
+# ---------------------------------------------------------------------------
+
+SCRAPER_LOG_CAP_PER_EVENT = 200
+
+
+def log_event(event_id: int, level: str, message: str) -> None:
+    """Persist a scraper event for in-app display. Caps the per-event row
+    count at SCRAPER_LOG_CAP_PER_EVENT to keep the table bounded."""
+    try:
+        with SessionLocal() as db:
+            db.add(ScraperLog(event_id=event_id, level=level, message=message[:500]))
+            # Bound table size: prune oldest rows once we exceed the cap.
+            ids = db.execute(
+                select(ScraperLog.id)
+                .where(ScraperLog.event_id == event_id)
+                .order_by(ScraperLog.ts.desc())
+                .offset(SCRAPER_LOG_CAP_PER_EVENT)
+            ).scalars().all()
+            if ids:
+                from sqlalchemy import delete as sa_delete
+                db.execute(sa_delete(ScraperLog).where(ScraperLog.id.in_(ids)))
+            db.commit()
+    except Exception:
+        # Logging failures must never break the scraper loop.
+        logger.exception("failed to write scraper_log row")
 
 logger = logging.getLogger("scraper")
 
@@ -284,6 +313,7 @@ async def run_demo(event_id: int, stop_event: asyncio.Event) -> None:
     lap_counters = {c: 0 for c in cars}
     logger.info(f"event {event_id}: demo scraper started with cars={cars} "
                 f"(cap {DEMO_MAX_LAPS_PER_CAR} laps/car)")
+    log_event(event_id, "info", f"demo scraper started — cars {cars}, cap {DEMO_MAX_LAPS_PER_CAR} laps/car")
 
     while not stop_event.is_set():
         if all(lap_counters[c] >= DEMO_MAX_LAPS_PER_CAR for c in cars):
@@ -360,12 +390,14 @@ async def run_natsoft(event_id: int, url: str, stop_event: asyncio.Event) -> Non
         return
 
     logger.info(f"event {event_id}: natsoft scraper starting for {url}")
+    log_event(event_id, "info", f"scraper starting for {url}")
     async with async_playwright() as p:
         try:
             browser = await p.chromium.launch(headless=True)
         except Exception as e:
             logger.error(f"event {event_id}: failed to launch chromium ({e}). "
                          f"Did you run `playwright install chromium`?")
+            log_event(event_id, "error", f"failed to launch chromium: {e}")
             return
         context = await browser.new_context()
 
@@ -380,16 +412,15 @@ async def run_natsoft(event_id: int, url: str, stop_event: asyncio.Event) -> Non
                 await tmp.close()
             if not discovered:
                 logger.error(
-                    f"event {event_id}: couldn't auto-discover a LiveMeeting iframe at {url}. "
-                    f"Use the iframe URL directly — looks like "
-                    f"http://server.natsoft.com.au:8080/LiveMeeting/YYYYMMDD.VENUECODE. "
-                    f"Open the live timing in your browser, F12 → Console → "
-                    f"copy(document.querySelector('iframe[src*=\"LiveMeeting\"]').src)"
+                    f"event {event_id}: couldn't auto-discover a LiveMeeting iframe at {url}."
                 )
+                log_event(event_id, "error",
+                          "couldn't auto-discover the LiveMeeting iframe — use the meeting picker.")
                 await browser.close()
                 return
             target_url = discovered
             logger.info(f"event {event_id}: resolved to {target_url}")
+            log_event(event_id, "info", f"resolved to LiveMeeting URL: {target_url}")
 
         page = await context.new_page()
         try:
@@ -397,17 +428,32 @@ async def run_natsoft(event_id: int, url: str, stop_event: asyncio.Event) -> Non
             # The JS app needs a moment to connect to the WebSocket + render.
             await asyncio.sleep(INITIAL_RENDER_WAIT_SEC)
 
+            last_change_summary: tuple[int, int] | None = None
             while not stop_event.is_set():
                 try:
                     rows = await extract_laps(page)
                     if not rows:
                         logger.info(f"event {event_id}: no rows extracted this poll")
+                        # Avoid spamming the activity log with identical "no rows" lines.
+                        if last_change_summary != (0, 0):
+                            log_event(event_id, "info", "poll: no rows extracted yet")
+                            last_change_summary = (0, 0)
                     else:
                         with SessionLocal() as db:
                             n = upsert_laps(db, event_id, rows)
-                            logger.info(f"event {event_id}: extracted {len(rows)} rows, {n} new/updated")
+                        logger.info(f"event {event_id}: extracted {len(rows)} rows, {n} new/updated")
+                        # Only log when something changed, to keep the activity feed signal-rich.
+                        if n > 0:
+                            log_event(event_id, "info",
+                                      f"poll: saw {len(rows)} cars, {n} new/updated lap(s)")
+                            last_change_summary = (len(rows), n)
+                        elif last_change_summary != (len(rows), 0):
+                            log_event(event_id, "info",
+                                      f"poll: saw {len(rows)} cars, no changes")
+                            last_change_summary = (len(rows), 0)
                 except Exception as e:
                     logger.exception(f"event {event_id}: extract loop error: {e}")
+                    log_event(event_id, "error", f"extract loop error: {e}")
                 try:
                     await asyncio.wait_for(stop_event.wait(), timeout=POLL_INTERVAL_SEC)
                 except asyncio.TimeoutError:
@@ -416,6 +462,7 @@ async def run_natsoft(event_id: int, url: str, stop_event: asyncio.Event) -> Non
             await context.close()
             await browser.close()
     logger.info(f"event {event_id}: natsoft scraper stopped")
+    log_event(event_id, "info", "scraper stopped")
 
 
 # ---------------------------------------------------------------------------

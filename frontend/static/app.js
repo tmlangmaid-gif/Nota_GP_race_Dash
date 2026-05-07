@@ -57,50 +57,99 @@ document.addEventListener("submit", async (e) => {
   }
 });
 
-document.addEventListener("click", async (e) => {
-  // Open Natsoft in a popup window (saves the user finding the URL).
-  // Note: Natsoft's HTTPS cert is broken — only HTTP works. Modern browsers
-  // are fine opening an HTTP popup from an HTTPS page (no mixed-content rule
-  // applies to top-level navigations).
-  if (e.target.id === "browse-natsoft-btn") {
-    e.preventDefault();
-    const popup = window.open(
-      "http://racing.natsoft.com.au/results/",
-      "natsoft",
-      "width=1100,height=820,resizable=yes,scrollbars=yes,toolbar=yes,location=yes"
-    );
-    if (!popup) {
-      alert("Your browser blocked the popup. Allow popups for this site, or open http://racing.natsoft.com.au/results/ manually in a new tab.");
-    } else {
-      popup.focus();
-    }
-    return;
+// ---------------------------------------------------------------------------
+// Meeting picker modal
+// ---------------------------------------------------------------------------
+
+const MeetingPicker = (function () {
+  let _meetings = [];
+
+  function open() {
+    document.getElementById("meeting-picker-modal").style.display = "flex";
+    refresh();
   }
-  // Paste the URL from clipboard into the input. Browsers won't let us read a
-  // cross-site popup's URL, so the clipboard is the cleanest hand-off.
-  if (e.target.id === "paste-natsoft-btn") {
-    e.preventDefault();
-    if (!navigator.clipboard?.readText) {
-      alert("Your browser doesn't support clipboard reading. Paste with Ctrl+V into the URL field instead.");
+  function close() {
+    document.getElementById("meeting-picker-modal").style.display = "none";
+  }
+
+  async function refresh() {
+    const status = document.getElementById("meeting-picker-status");
+    const list = document.getElementById("meeting-picker-list");
+    const discipline = parseInt(document.getElementById("meeting-discipline").value, 10);
+    status.style.color = "var(--muted)";
+    status.textContent = "Loading meetings from Natsoft… (~10s)";
+    list.innerHTML = `<div class="muted" style="padding: 14px;">Fetching the meeting list. This launches a headless browser on the server, so the first request takes ~10 seconds.</div>`;
+    try {
+      _meetings = await API.natsoftMeetings(discipline);
+      status.textContent = `${_meetings.length} meetings`;
+      render();
+    } catch (err) {
+      status.style.color = "var(--bad)";
+      status.textContent = err.message;
+      list.innerHTML = `<div class="muted" style="padding: 14px; color: var(--bad);">Couldn't load: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  function render() {
+    const list = document.getElementById("meeting-picker-list");
+    const liveOnly = document.getElementById("meeting-live-only").checked;
+    const visible = liveOnly ? _meetings.filter((m) => m.has_live) : _meetings;
+    if (!visible.length) {
+      list.innerHTML = `<div class="muted" style="padding: 14px;">No ${liveOnly ? "live" : ""} meetings right now. ${liveOnly ? "Untick \"Live now only\" to see recent meetings." : ""}</div>`;
       return;
     }
+    list.innerHTML = visible.map((m) => `
+      <div class="member-row" style="padding: 8px 12px; cursor: ${m.has_live ? "pointer" : "default"};"
+           data-act="pick-meeting" data-discipline="${document.getElementById("meeting-discipline").value}"
+           data-slot="${m.slot}" data-name="${escapeHtml(m.name)}">
+        <div style="grid-column: 1 / -1; display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap;">
+          <strong style="font-size: 14px;">${escapeHtml(m.name)}</strong>
+          ${m.has_live ? '<span class="tag live">LIVE</span>' : '<span class="tag idle">past</span>'}
+          <span class="muted" style="font-size: 12px;">${escapeHtml(m.date)} • ${escapeHtml(m.track)}</span>
+        </div>
+      </div>
+    `).join("");
+  }
+
+  return { open, close, refresh, render };
+})();
+
+document.addEventListener("change", (e) => {
+  if (e.target.id === "meeting-discipline") MeetingPicker.refresh();
+  if (e.target.id === "meeting-live-only") MeetingPicker.render();
+});
+
+document.addEventListener("click", async (e) => {
+  if (e.target.id === "find-meeting-btn") {
+    e.preventDefault();
+    MeetingPicker.open();
+    return;
+  }
+  if (e.target.id === "meeting-picker-close" || e.target.id === "meeting-picker-modal") {
+    MeetingPicker.close();
+    return;
+  }
+
+  const pick = e.target.closest('[data-act="pick-meeting"]');
+  if (pick) {
+    e.preventDefault();
+    e.stopPropagation();
+    const discipline = parseInt(pick.dataset.discipline, 10);
+    const slot = parseInt(pick.dataset.slot, 10);
+    const name = pick.dataset.name;
+    const status = document.getElementById("meeting-picker-status");
+    status.style.color = "var(--muted)";
+    status.textContent = `Resolving "${name}"…`;
     try {
-      const text = (await navigator.clipboard.readText()).trim();
-      if (!text) {
-        alert("Your clipboard is empty.");
-        return;
-      }
-      const inp = document.getElementById("natsoft-url");
-      inp.value = text;
-      inp.focus();
-      inp.select();
-      // Light validation — flag if it doesn't look like a Natsoft URL or demo://.
-      if (!/natsoft\.com\.au|^demo:\/\//i.test(text)) {
-        inp.style.borderColor = "var(--warn)";
-        setTimeout(() => { inp.style.borderColor = ""; }, 1500);
-      }
+      const res = await API.natsoftResolve({ discipline, slot });
+      document.getElementById("natsoft-url").value = res.url;
+      // Pre-fill the event name with the meeting name as a sensible default
+      const nameInp = document.getElementById("event-name");
+      if (!nameInp.value.trim()) nameInp.value = name;
+      MeetingPicker.close();
     } catch (err) {
-      alert("Couldn't read clipboard. You may need to grant permission, or just paste manually with Ctrl+V.\n\n" + err.message);
+      status.style.color = "var(--bad)";
+      status.textContent = err.message;
     }
     return;
   }

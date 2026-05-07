@@ -12,12 +12,14 @@ from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .db import Base, engine, ensure_column, get_db, SessionLocal
 from .email_sender import send_password_reset_email
-from .models import AuthToken, Driver, Event, EventMember, Lap, PasswordResetToken, TrackedCar, User
+from .natsoft_browser import browser as natsoft_browser
+from .models import AuthToken, Driver, Event, EventMember, Lap, PasswordResetToken, ScraperLog, TrackedCar, User
 from .schemas import (
     AuthResponse,
     DriverCreate, DriverOut, DriverUpdate,
@@ -64,6 +66,7 @@ async def lifespan(app: FastAPI):
         db.commit()
     yield
     await scraper_manager.stop_all()
+    await natsoft_browser.close()
 
 
 app = FastAPI(title="Race Dash", lifespan=lifespan)
@@ -332,6 +335,60 @@ def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db))
     db.execute(sa_delete(AuthToken).where(AuthToken.user_id == user.id))
     db.commit()
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Natsoft meeting picker — used by the New event form
+# ---------------------------------------------------------------------------
+
+class NatsoftMeeting(BaseModel):
+    slot: int
+    date: str
+    name: str
+    track: str
+    has_live: bool
+
+
+class ResolveNatsoftMeetingRequest(BaseModel):
+    discipline: int   # 0 = Circuit Racing, 1 = Bikes
+    slot: int
+
+
+class ResolvedNatsoftMeeting(BaseModel):
+    url: str
+
+
+@app.get("/api/natsoft/meetings", response_model=list[NatsoftMeeting])
+async def list_natsoft_meetings(
+    discipline: int = 0,
+    user: User = Depends(get_current_user),
+):
+    """Recent meetings from Natsoft. Cached 60s."""
+    if discipline not in (0, 1):
+        raise HTTPException(400, "discipline must be 0 (Circuit Racing) or 1 (Bikes)")
+    try:
+        return await natsoft_browser.list_meetings(discipline)
+    except Exception as e:
+        logging.getLogger("natsoft").exception("list_meetings failed")
+        raise HTTPException(503, f"couldn't reach Natsoft: {e}")
+
+
+@app.post("/api/natsoft/resolve_meeting", response_model=ResolvedNatsoftMeeting)
+async def resolve_natsoft_meeting(
+    payload: ResolveNatsoftMeetingRequest,
+    user: User = Depends(get_current_user),
+):
+    """Click the Live link for a specific meeting and return the LiveMeeting iframe URL."""
+    if payload.discipline not in (0, 1):
+        raise HTTPException(400, "discipline must be 0 or 1")
+    try:
+        url = await natsoft_browser.resolve_meeting_url(payload.discipline, payload.slot)
+    except Exception as e:
+        logging.getLogger("natsoft").exception("resolve_meeting failed")
+        raise HTTPException(503, f"couldn't reach Natsoft: {e}")
+    if not url:
+        raise HTTPException(404, "this meeting doesn't have a Live link (not currently broadcasting)")
+    return ResolvedNatsoftMeeting(url=url)
 
 
 # ---------------------------------------------------------------------------
@@ -876,6 +933,30 @@ def soft_delete_lap(
 # ---------------------------------------------------------------------------
 # Leaderboard
 # ---------------------------------------------------------------------------
+
+class ScraperLogOut(BaseModel):
+    ts: datetime
+    level: str
+    message: str
+
+
+@app.get("/api/events/{event_id}/scraper_logs", response_model=list[ScraperLogOut])
+def get_scraper_logs(
+    event_id: int,
+    limit: int = 100,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Recent scraper-activity log lines for this event, newest first."""
+    get_user_event_read(event_id, user, db)
+    rows = db.execute(
+        select(ScraperLog)
+        .where(ScraperLog.event_id == event_id)
+        .order_by(ScraperLog.ts.desc())
+        .limit(min(limit, 500))
+    ).scalars().all()
+    return [ScraperLogOut(ts=r.ts, level=r.level, message=r.message) for r in rows]
+
 
 @app.get("/api/events/{event_id}/leaderboard", response_model=list[LeaderboardRow])
 def leaderboard(

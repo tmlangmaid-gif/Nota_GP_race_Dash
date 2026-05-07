@@ -20,22 +20,38 @@
       <h2>New event</h2>
       <form id="new-event-form" class="row" style="flex-wrap: wrap;">
         <input type="text" id="event-name" placeholder="Event name (e.g. Nota GP — Round 3)" required />
-        <input type="url" id="natsoft-url" placeholder="Natsoft event URL (or demo:// for synthetic data)" style="flex:1; min-width: 280px" />
-        <button type="button" id="browse-natsoft-btn" title="Open Natsoft live timing in a popup">Browse Natsoft…</button>
-        <button type="button" id="paste-natsoft-btn" title="Fill the URL from your clipboard">Paste URL</button>
+        <input type="text" id="natsoft-url" placeholder="Pick a meeting → URL fills in here (or type demo://)" style="flex:1; min-width: 280px;" />
+        <button type="button" id="find-meeting-btn" class="primary">Find your meeting…</button>
         <button type="submit" class="primary">Create</button>
       </form>
       <div class="muted" style="margin-top: 8px; font-size: 12px;">
-        <strong>How to find the live URL:</strong>
-        click <strong>Browse Natsoft…</strong> →
-        in the popup, click <em>Circuit Racing</em> → click <em>Live</em> next to your meeting →
-        when the live timing appears, press <code>F12</code> → <em>Console</em> tab →
-        paste this single line and hit Enter:
-        <pre style="background: var(--panel-2); padding: 6px 8px; border-radius: 4px; margin: 4px 0; overflow-x: auto;">copy(document.querySelector('iframe[src*="LiveMeeting"]').src)</pre>
-        That copies the right URL. Come back here, click <strong>Paste URL</strong>, then <strong>Create</strong>.
-        Or use <code>demo://</code> for synthetic data.
+        Click <strong>Find your meeting…</strong> to pick from currently-running Natsoft meetings.
+        Or paste <code>demo://</code> in the URL box for synthetic data.
       </div>
     </section>
+
+    <!-- Meeting picker modal -->
+    <div id="meeting-picker-modal" class="modal-backdrop" style="display:none">
+      <div class="modal" style="max-width: 760px;">
+        <div class="row" style="justify-content: space-between; align-items: baseline; margin-bottom: 10px;">
+          <h2 style="margin:0;">Find a meeting</h2>
+          <button class="icon-btn" id="meeting-picker-close">×</button>
+        </div>
+        <div class="row" style="margin-bottom: 12px;">
+          <label class="muted" style="font-size:12px;">Discipline</label>
+          <select id="meeting-discipline">
+            <option value="0">Circuit Racing</option>
+            <option value="1">Bikes</option>
+          </select>
+          <label class="muted" style="font-size:12px;">
+            <input type="checkbox" id="meeting-live-only" checked /> Live now only
+          </label>
+          <span class="spacer"></span>
+          <span id="meeting-picker-status" class="muted" style="font-size:12px;"></span>
+        </div>
+        <div id="meeting-picker-list" style="max-height: 480px; overflow:auto; border:1px solid var(--border); border-radius: 6px;"></div>
+      </div>
+    </div>
 
     <section class="panel">
       <h2>Events</h2>

@@ -69,6 +69,13 @@ const API = {
   updateLap: (lapId, body) => api(`/api/laps/${lapId}`, { method: "PATCH", body }),
   deleteLap: (lapId) => api(`/api/laps/${lapId}`, { method: "DELETE" }),
   leaderboard: (eventId) => api(`/api/events/${eventId}/leaderboard`),
+
+  // Scraper activity logs
+  scraperLogs: (eventId, limit = 100) => api(`/api/events/${eventId}/scraper_logs?limit=${limit}`),
+
+  // Natsoft meeting picker
+  natsoftMeetings: (discipline) => api(`/api/natsoft/meetings?discipline=${discipline}`),
+  natsoftResolve: (body) => api(`/api/natsoft/resolve_meeting`, { method: "POST", body }),
 };
 
 // Format milliseconds as M:SS.mmm or SS.mmm

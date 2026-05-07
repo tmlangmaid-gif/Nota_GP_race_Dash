@@ -42,6 +42,19 @@ class PasswordResetToken(Base):
     used_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
+class ScraperLog(Base):
+    """A row per scraper-loop event for an Event. Used to render the in-app
+    'Scraper activity' panel so users can see the scraper is alive without
+    needing terminal access. Capped per-event to avoid unbounded growth."""
+    __tablename__ = "scraper_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True)
+    ts: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    level: Mapped[str] = mapped_column(String(10), nullable=False)   # info | warn | error
+    message: Mapped[str] = mapped_column(String(500), nullable=False)
+
+
 class Event(Base):
     __tablename__ = "events"
 
