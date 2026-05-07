@@ -37,8 +37,18 @@
         <div style="text-align: right; margin-top: 8px; font-size: 12px;">
           <a href="/forgot-password">Forgot password?</a>
         </div>
+
+        <div id="signup-legal" class="muted" style="font-size: 12px; margin-top: 12px; display: none; text-align: center;">
+          By creating an account you agree to the
+          <a href="/legal" target="_blank">Terms &amp; Privacy</a>.
+          Race Dash is a hobbyist trial app — data isn't guaranteed to be retained.
+        </div>
       </form>
     </section>
+
+    <p class="muted" style="font-size:12px; text-align:center; margin-top: 14px;">
+      <a href="/legal">Terms &amp; Privacy</a>
+    </p>
   </main>
 
   <script src="/static/config.js"></script>
@@ -55,6 +65,7 @@
       const errBox = document.getElementById("auth-error");
       const pwHint = document.getElementById("password-hint");
 
+      const signupLegal = document.getElementById("signup-legal");
       let mode = "login";
       function setMode(m) {
         mode = m;
@@ -62,6 +73,7 @@
         tabSignup.className = m === "signup" ? "primary" : "";
         submitBtn.textContent = m === "login" ? "Log in" : "Create account";
         pwHint.style.display = m === "signup" ? "block" : "none";
+        signupLegal.style.display = m === "signup" ? "block" : "none";
         errBox.style.display = "none";
       }
       tabLogin.addEventListener("click", () => setMode("login"));

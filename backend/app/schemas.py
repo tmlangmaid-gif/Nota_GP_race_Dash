@@ -31,6 +31,14 @@ class UpdateMeRequest(BaseModel):
     new_password: str | None = Field(default=None, min_length=8, max_length=200)
 
 
+class DeleteMeRequest(BaseModel):
+    """Body for DELETE /api/auth/me — current password required to confirm.
+    Destroys the user and (via FK cascades) every event they own, every
+    membership, and every auth session. Pending invites by email are left in
+    place so a re-signup with the same email still picks them up."""
+    password: str
+
+
 class ForgotPasswordRequest(BaseModel):
     email: str
 

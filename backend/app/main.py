@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 import bcrypt
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -24,6 +24,7 @@ from . import stripe_paywall
 from .schemas import (
     AuthResponse,
     DriverCreate, DriverOut, DriverUpdate,
+    DeleteMeRequest,
     EventCreate, EventOut, EventUpdate,
     EventMemberCreate, EventMemberOut, EventMembershipOut, EventMemberUpdate,
     ForgotPasswordRequest,
@@ -300,6 +301,38 @@ def me(user: User = Depends(get_current_user)):
     return user
 
 
+@app.delete("/api/auth/me", status_code=204)
+async def delete_me(
+    payload: DeleteMeRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Permanent self-delete. Requires the user's current password to confirm.
+
+    Cascades wipe every event they own, every membership row, every auth
+    token, every password-reset token. EventInvites are keyed by email (not
+    user_id) so they're left intact — re-signing up with the same email will
+    pick them up via the auto-claim in the signup endpoint.
+
+    Any scraper task running for an event this user owns is stopped before
+    the database delete."""
+    if not verify_password(payload.password, user.password_hash):
+        raise HTTPException(401, "current password is incorrect")
+
+    # Stop scrapers for any events this user owns so they don't keep writing
+    # to a table that's about to disappear.
+    owned_event_ids = db.execute(
+        select(Event.id).where(Event.user_id == user.id)
+    ).scalars().all()
+    for eid in owned_event_ids:
+        if scraper_manager.is_running(eid):
+            await scraper_manager.stop(eid)
+
+    db.delete(user)
+    db.commit()
+    return Response(status_code=204)
+
+
 @app.patch("/api/auth/me", response_model=UserOut)
 def update_me(
     payload: UpdateMeRequest,
@@ -335,7 +368,6 @@ def update_me(
 # Password reset
 # ---------------------------------------------------------------------------
 
-from fastapi import Response  # local import to keep top of file tidy
 from sqlalchemy import delete as sa_delete
 
 @app.post("/api/auth/request_password_reset", status_code=204)
@@ -1291,3 +1323,7 @@ if FRONTEND_DIR.exists():
     @app.get("/reset-password")
     def reset_password_page():
         return FileResponse(FRONTEND_DIR / "reset-password.html")
+
+    @app.get("/legal")
+    def legal_page():
+        return FileResponse(FRONTEND_DIR / "legal.html")

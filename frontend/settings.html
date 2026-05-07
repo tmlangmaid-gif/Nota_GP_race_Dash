@@ -58,6 +58,28 @@
       </form>
     </section>
 
+    <section class="panel">
+      <h2 style="color: var(--bad);">Delete account</h2>
+      <p class="muted" style="font-size:13px;">
+        Permanently deletes your account, every event you own, all lap data,
+        and your team memberships. This can't be undone. Pending invites
+        you've received from other people stay in place — you'd join those
+        events automatically if you sign up again with the same email.
+      </p>
+      <form id="delete-form">
+        <div style="margin-bottom:8px;">
+          <label class="muted" style="font-size:12px;">Confirm with your current password</label>
+          <input type="password" id="del-password" style="width:100%;" required />
+        </div>
+        <button type="submit" class="danger">Delete my account</button>
+        <span id="del-msg" class="muted" style="margin-left:10px;"></span>
+      </form>
+    </section>
+
+    <p class="muted" style="font-size:12px; text-align:center; margin-top: 16px;">
+      <a href="/legal">Terms &amp; Privacy</a>
+    </p>
+
   </main>
 
   <script src="/static/config.js"></script>
@@ -85,6 +107,23 @@
           document.getElementById("current-email").textContent = updated.email;
           document.getElementById("new-email").value = "";
           document.getElementById("email-current-pw").value = "";
+        } catch (err) {
+          msg.style.color = "var(--bad)";
+          msg.textContent = err.message;
+        }
+      });
+
+      document.getElementById("delete-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const msg = document.getElementById("del-msg");
+        const pw = document.getElementById("del-password").value;
+        if (!confirm("This permanently deletes your account, every event you own, and all lap data. Continue?")) return;
+        msg.style.color = "var(--muted)";
+        msg.textContent = "Deleting…";
+        try {
+          await Auth.deleteMe(pw);
+          // Auth token already cleared by deleteMe — bounce to login.
+          location.replace("/login");
         } catch (err) {
           msg.style.color = "var(--bad)";
           msg.textContent = err.message;

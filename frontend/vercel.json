@@ -9,6 +9,7 @@
     { "source": "/scraper-activity",  "destination": "/scraper-activity.html"  },
     { "source": "/workflow",          "destination": "/workflow.html"          },
     { "source": "/forgot-password",   "destination": "/forgot-password.html"   },
-    { "source": "/reset-password",  "destination": "/reset-password.html"  }
+    { "source": "/reset-password",    "destination": "/reset-password.html"    },
+    { "source": "/legal",             "destination": "/legal.html"             }
   ]
 }

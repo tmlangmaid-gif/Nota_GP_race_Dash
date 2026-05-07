@@ -64,6 +64,13 @@ window.Auth = (function () {
       return rawFetch("/api/auth/me", { method: "PATCH", headers: authHeader(), body });
     },
 
+    async deleteMe(password) {
+      // Sends current password in the body so the server can confirm before
+      // wiping the account. On success, clears the local token.
+      await rawFetch("/api/auth/me", { method: "DELETE", headers: authHeader(), body: { password } });
+      this.clearToken();
+    },
+
     /** Bootstrap helper for protected pages: redirect to /login if not signed in.
      *  Returns the user on success; otherwise navigates away and returns a never-resolving promise. */
     async requireAuth() {
