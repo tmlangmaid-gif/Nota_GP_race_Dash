@@ -1,13 +1,18 @@
 """
 Playwright-based scraper for Natsoft's live timing pages.
 
-Natsoft's results UI is a JS app that renders a live timing table from a binary
-WebSocket stream. We sidestep the protocol by loading the page in headless
-Chromium and reading the rendered DOM every few seconds.
+Natsoft's UI renders timing data as absolutely-positioned <div> elements
+(no HTML tables), driven by a binary WebSocket. The actual live data lives
+in an iframe at:
 
-The DOM extractor (`extract_laps`) is a best-effort generic table parser. The
-Natsoft layout varies slightly per event/category, so when you start tracking
-your first real event, watch the logs and tweak `extract_laps` if needed.
+    http://server.natsoft.com.au:8080/LiveMeeting/YYYYMMDD.VENUECODE
+
+Point the scraper at that URL directly and it Just Works.
+
+If the user gives us the parent page URL (e.g. http://racing.natsoft.com.au/results/)
+we try to load it and find the iframe — but the parent page only renders the
+LiveMeeting iframe AFTER the user clicks through (Discipline → meeting Live link),
+so this auto-discovery usually fails and we surface a clear error.
 
 There is also a demo mode: pass `demo://` (or any URL starting with `demo://`)
 as the natsoft_url to generate synthetic lap data for testing the dashboard
@@ -63,100 +68,143 @@ def parse_lap_time_ms(value: str) -> int | None:
 
 
 # ---------------------------------------------------------------------------
-# Generic DOM extractor (best-effort; tune per real event)
+# Live-timing extractor (positioned-div layout)
 # ---------------------------------------------------------------------------
+#
+# Natsoft's LiveMeeting page uses absolutely-positioned <div> elements for
+# every cell. We:
+#   1. Grab every leaf NText/NTextBold div with its on-screen (top, left).
+#   2. Group items into rows by Y coordinate (5px tolerance).
+#   3. Find the row with "Pos", "Car" and "Best lap" → header row.
+#   4. For each subsequent row, walk left-to-right and pattern-match each cell:
+#        first integer → Pos
+#        next item → Car
+#        3-5 letter caps → Class
+#        first text containing letters after Class → Driver
+#        first integer after Driver → Laps count
+#        first time-with-colon → Last lap
+#        second time-with-colon → Best lap
+#   This pattern survives the column-X-mismatch problem (header text is
+#   left-aligned, data values are centred or right-aligned, so they don't
+#   share X coordinates with their headers).
 
-LAP_NUM_HEADERS = {"lap", "lap#", "laps", "lap no", "lap no.", "l"}
-VEHICLE_HEADERS = {"#", "no", "no.", "car", "car#", "car no", "comp", "no#"}
-TIME_HEADERS = {"last", "last lap", "lap time", "time", "last time"}
-POSITION_HEADERS = {"pos", "position", "p"}
+# Strict time format that REQUIRES a colon, so the integer "1" can't
+# accidentally be classified as a lap time.
+_LIVE_TIME_RE = re.compile(r"^(\d+):(\d+)(?:[.,](\d{1,4}))?$")
+_INT_RE = re.compile(r"^\d+$")
+_CLASS_RE = re.compile(r"^[A-Z]{2,5}$")
 
 
-def _norm(s: str) -> str:
-    return re.sub(r"\s+", " ", (s or "")).strip().lower()
+def _parse_live_time_ms(text: str) -> int | None:
+    if not text:
+        return None
+    m = _LIVE_TIME_RE.fullmatch(text.strip())
+    if not m:
+        return None
+    minutes = int(m.group(1))
+    seconds = int(m.group(2))
+    frac = ((m.group(3) or "0") + "000")[:3]
+    total = (minutes * 60 + seconds) * 1000 + int(frac)
+    return total if total > 0 else None
 
 
-def _classify_headers(headers: list[str]) -> dict[str, int]:
-    """Map column-purpose to column-index based on header text."""
-    cols: dict[str, int] = {}
-    for i, h in enumerate(headers):
-        n = _norm(h)
-        if n in POSITION_HEADERS and "position" not in cols:
-            cols["position"] = i
-        elif n in VEHICLE_HEADERS and "vehicle" not in cols:
-            cols["vehicle"] = i
-        elif n in LAP_NUM_HEADERS and "lap_number" not in cols:
-            cols["lap_number"] = i
-        elif n in TIME_HEADERS and "lap_time" not in cols:
-            cols["lap_time"] = i
-    return cols
+def _parse_live_row(items: list[dict]) -> dict | None:
+    items = sorted(items, key=lambda x: x["left"])
+    pos = None
+    car = None
+    klass = None
+    driver = None
+    laps_count = None
+    times: list[str] = []
+    seen_driver = False
+
+    for it in items:
+        t = it["text"].strip()
+        if pos is None and _INT_RE.fullmatch(t):
+            pos = int(t)
+            continue
+        if car is None:
+            car = t
+            continue
+        if not seen_driver and _CLASS_RE.fullmatch(t):
+            klass = t
+            continue
+        if not seen_driver and re.search(r"[A-Za-z]", t):
+            driver = t
+            seen_driver = True
+            continue
+        if seen_driver:
+            if _LIVE_TIME_RE.fullmatch(t):
+                times.append(t)
+                continue
+            if _INT_RE.fullmatch(t) and laps_count is None:
+                laps_count = int(t)
+                continue
+
+    if not (car and laps_count is not None and times):
+        return None
+    last_lap_ms = _parse_live_time_ms(times[0])
+    if last_lap_ms is None:
+        return None
+    return {
+        "vehicle_number": car,
+        "lap_number": laps_count,
+        "lap_time_ms": last_lap_ms,
+        "position": pos,
+    }
 
 
 async def extract_laps(page) -> list[dict]:
-    """
-    Walk every <table> on the page, try to interpret it as a live-timing table,
-    and return rows as dicts: {vehicle_number, lap_number, lap_time_ms, position?}.
+    """Pull live-timing rows from Natsoft's positioned-div layout."""
+    items = await page.evaluate(
+        """() => {
+  const out = [];
+  for (const el of document.querySelectorAll('[class*="NText"]')) {
+    if (el.children.length > 0) continue;     // only leaf text nodes
+    const t = el.innerText.trim();
+    if (!t) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) continue;
+    out.push({text: t, top: Math.round(r.top), left: Math.round(r.left)});
+  }
+  return out;
+}"""
+    )
+    if not items:
+        return []
 
-    Skips tables we can't classify. Logs what it tried so you can iterate.
-    """
-    tables = await page.query_selector_all("table")
-    results: list[dict] = []
+    items.sort(key=lambda x: (x["top"], x["left"]))
+    rows: list[list[dict]] = []
+    cur: list[dict] = []
+    last_top: int | None = None
+    for it in items:
+        if last_top is None or abs(it["top"] - last_top) <= 5:
+            cur.append(it)
+            if last_top is None:
+                last_top = it["top"]
+        else:
+            rows.append(cur)
+            cur = [it]
+            last_top = it["top"]
+    if cur:
+        rows.append(cur)
 
-    for ti, table in enumerate(tables):
-        try:
-            header_cells = await table.query_selector_all("thead tr th, thead tr td")
-            if not header_cells:
-                # Some tables put headers in the first <tr>
-                first_row = await table.query_selector("tr")
-                if first_row:
-                    header_cells = await first_row.query_selector_all("th, td")
-            if not header_cells:
-                continue
-            headers = [await c.inner_text() for c in header_cells]
-            cols = _classify_headers(headers)
-            if "vehicle" not in cols or "lap_time" not in cols:
-                continue
+    # Find the header row by content fingerprint.
+    header_idx = None
+    for i, row in enumerate(rows):
+        texts = [it["text"].lower() for it in row]
+        if "pos" in texts and "car" in texts and any("best" in t for t in texts):
+            header_idx = i
+            break
+    if header_idx is None:
+        return []
 
-            row_els = await table.query_selector_all("tbody tr")
-            if not row_els:
-                # Fallback: every row except the first
-                all_rows = await table.query_selector_all("tr")
-                row_els = all_rows[1:] if len(all_rows) > 1 else []
-
-            for row in row_els:
-                cells = await row.query_selector_all("td, th")
-                if not cells:
-                    continue
-                texts = [(await c.inner_text()).strip() for c in cells]
-                if max(cols.values()) >= len(texts):
-                    continue
-                vehicle = texts[cols["vehicle"]].strip()
-                if not vehicle or not re.search(r"\w", vehicle):
-                    continue
-                lap_time_ms = parse_lap_time_ms(texts[cols["lap_time"]])
-                if lap_time_ms is None:
-                    continue
-                lap_number_raw = texts[cols["lap_number"]] if "lap_number" in cols else ""
-                try:
-                    lap_number = int(re.sub(r"\D", "", lap_number_raw)) if lap_number_raw else 0
-                except ValueError:
-                    lap_number = 0
-                position = None
-                if "position" in cols:
-                    try:
-                        position = int(re.sub(r"\D", "", texts[cols["position"]]))
-                    except ValueError:
-                        position = None
-                results.append({
-                    "vehicle_number": vehicle,
-                    "lap_number": lap_number,
-                    "lap_time_ms": lap_time_ms,
-                    "position": position,
-                })
-        except Exception as e:
-            logger.warning(f"table {ti}: extractor failed: {e}")
-
-    return results
+    out: list[dict] = []
+    for row in rows[header_idx + 1:]:
+        d = _parse_live_row(row)
+        if d:
+            out.append(d)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +329,29 @@ async def run_demo(event_id: int, stop_event: asyncio.Event) -> None:
 # Real Playwright scraper
 # ---------------------------------------------------------------------------
 
+_LIVE_MEETING_RE = re.compile(r"/LiveMeeting/", re.IGNORECASE)
+INITIAL_RENDER_WAIT_SEC = 10  # JS app needs this long to connect WS + paint first frame
+
+
+async def _resolve_live_meeting_url(page, parent_url: str) -> str | None:
+    """If the user gave us a parent results URL, try to load it and pluck the
+    LiveMeeting iframe src. Will only work if the parent URL leads directly
+    to a session view (rare — usually the user has to click through)."""
+    try:
+        await page.goto(parent_url, timeout=PAGE_LOAD_TIMEOUT_MS, wait_until="domcontentloaded")
+    except Exception as e:
+        logger.error(f"failed to load parent URL {parent_url}: {e}")
+        return None
+    try:
+        await page.wait_for_selector('iframe[src*="LiveMeeting"]', timeout=15_000)
+    except Exception:
+        return None
+    try:
+        return await page.eval_on_selector('iframe[src*="LiveMeeting"]', "el => el.src")
+    except Exception:
+        return None
+
+
 async def run_natsoft(event_id: int, url: str, stop_event: asyncio.Event) -> None:
     try:
         from playwright.async_api import async_playwright
@@ -297,15 +368,34 @@ async def run_natsoft(event_id: int, url: str, stop_event: asyncio.Event) -> Non
                          f"Did you run `playwright install chromium`?")
             return
         context = await browser.new_context()
+
+        # Resolve the target URL: either the user gave us a LiveMeeting URL
+        # directly, or we try to find it from a parent results page.
+        target_url = url
+        if not _LIVE_MEETING_RE.search(url):
+            tmp = await context.new_page()
+            try:
+                discovered = await _resolve_live_meeting_url(tmp, url)
+            finally:
+                await tmp.close()
+            if not discovered:
+                logger.error(
+                    f"event {event_id}: couldn't auto-discover a LiveMeeting iframe at {url}. "
+                    f"Use the iframe URL directly — looks like "
+                    f"http://server.natsoft.com.au:8080/LiveMeeting/YYYYMMDD.VENUECODE. "
+                    f"Open the live timing in your browser, F12 → Console → "
+                    f"copy(document.querySelector('iframe[src*=\"LiveMeeting\"]').src)"
+                )
+                await browser.close()
+                return
+            target_url = discovered
+            logger.info(f"event {event_id}: resolved to {target_url}")
+
         page = await context.new_page()
         try:
-            await page.goto(url, timeout=PAGE_LOAD_TIMEOUT_MS, wait_until="domcontentloaded")
-            # Give the JS app time to render its first table.
-            try:
-                await page.wait_for_selector("table", timeout=TABLE_WAIT_TIMEOUT_MS)
-            except Exception:
-                logger.warning(f"event {event_id}: no <table> appeared within "
-                               f"{TABLE_WAIT_TIMEOUT_MS}ms; will keep polling anyway")
+            await page.goto(target_url, timeout=PAGE_LOAD_TIMEOUT_MS, wait_until="domcontentloaded")
+            # The JS app needs a moment to connect to the WebSocket + render.
+            await asyncio.sleep(INITIAL_RENDER_WAIT_SEC)
 
             while not stop_event.is_set():
                 try:

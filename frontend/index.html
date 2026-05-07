@@ -26,11 +26,14 @@
         <button type="submit" class="primary">Create</button>
       </form>
       <div class="muted" style="margin-top: 8px; font-size: 12px;">
-        How to use: click <strong>Browse Natsoft…</strong> → drill down to your event in the popup →
-        copy the URL from its address bar (Ctrl+L, Ctrl+C) → click <strong>Paste URL</strong> → <strong>Create</strong>.
+        <strong>How to find the live URL:</strong>
+        click <strong>Browse Natsoft…</strong> →
+        in the popup, click <em>Circuit Racing</em> → click <em>Live</em> next to your meeting →
+        when the live timing appears, press <code>F12</code> → <em>Console</em> tab →
+        paste this single line and hit Enter:
+        <pre style="background: var(--panel-2); padding: 6px 8px; border-radius: 4px; margin: 4px 0; overflow-x: auto;">copy(document.querySelector('iframe[src*="LiveMeeting"]').src)</pre>
+        That copies the right URL. Come back here, click <strong>Paste URL</strong>, then <strong>Create</strong>.
         Or use <code>demo://</code> for synthetic data.
-        <br />
-        <span style="opacity: 0.7;">Browsers block us from reading a cross-site URL automatically — that's why a quick copy/paste step is needed.</span>
       </div>
     </section>
 
