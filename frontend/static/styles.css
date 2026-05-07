@@ -601,3 +601,23 @@ td.lap-time-cell {
   flex: 0 0 auto;
 }
 .driver-options .dot.unassigned { border-style: dashed; background: transparent; border-color: var(--border); }
+
+/* --- Paywall toast (Stripe success/cancel return) --- */
+.paywall-toast {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translate(-50%, -120%);
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 16px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.35);
+  font-size: 14px;
+  z-index: 3000;
+  transition: transform 220ms ease;
+}
+.paywall-toast.show { transform: translate(-50%, 0); }
+.paywall-toast.good { border-color: var(--accent-2); }
+.paywall-toast.warn { border-color: var(--warn); }

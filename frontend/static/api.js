@@ -76,6 +76,10 @@ const API = {
   // Natsoft meeting picker
   natsoftMeetings: (discipline) => api(`/api/natsoft/meetings?discipline=${discipline}`),
   natsoftResolve: (body) => api(`/api/natsoft/resolve_meeting`, { method: "POST", body }),
+
+  // Paywall
+  checkout: (eventId) => api(`/api/events/${eventId}/checkout`, { method: "POST" }),
+  applyCode: (eventId, code) => api(`/api/events/${eventId}/apply_code`, { method: "POST", body: { code } }),
 };
 
 // Format milliseconds as M:SS.mmm or SS.mmm

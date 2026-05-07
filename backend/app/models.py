@@ -71,6 +71,11 @@ class Event(Base):
     # When true, any logged-in user can read this event (read-only). Owner still
     # has full control and is the only one who can edit. Defaults to private.
     is_public: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Paywall: true once a Stripe checkout has completed for this event, or the
+    # owner redeemed a bypass code, or the event was grandfathered in at the
+    # time the paywall was first deployed. Sharing a paid event also gives
+    # members access (per-event billing, not per-user).
+    is_paid: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     drivers: Mapped[list["Driver"]] = relationship(back_populates="event", cascade="all, delete-orphan")
     laps: Mapped[list["Lap"]] = relationship(back_populates="event", cascade="all, delete-orphan")

@@ -901,6 +901,8 @@ async function tick() {
     ]);
     event_ = ev; drivers = drv; vehicles = veh; laps = lp; trackedCars = tc;
     renderAll(lb, { skipDriverCardsIfEditing: true, skipCarColumnsIfEditingNote: true });
+    // If the webhook flipped is_paid=true while the modal was open, hide it.
+    if (window.Paywall) window.Paywall.noteEventUpdate(ev);
   } catch (err) {
     console.error("tick failed", err);
   }
@@ -1595,6 +1597,18 @@ function maybeHideLoadingBannerOnData() {
     );
   } else {
     hideLoadingBanner();
+  }
+
+  // Handle Stripe success/cancel redirects (?paid=1 / ?paid=cancelled)
+  // and arm the 10-second paywall countdown if this event isn't unlocked.
+  if (window.Paywall) {
+    Paywall.handleSuccessReturn();
+    Paywall.onUnlocked = async () => {
+      // Refresh the dashboard view so anything that was hidden on read-only
+      // unpaid mode reappears.
+      await loadAll();
+    };
+    Paywall.armPaywallTimer(event_);
   }
 
   setInterval(async () => {

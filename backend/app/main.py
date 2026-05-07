@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 import bcrypt
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -20,6 +20,7 @@ from .db import Base, engine, ensure_column, get_db, SessionLocal
 from .email_sender import send_password_reset_email
 from .natsoft_browser import browser as natsoft_browser
 from .models import AuthToken, Driver, Event, EventMember, Lap, PasswordResetToken, ScraperLog, TrackedCar, User
+from . import stripe_paywall
 from .schemas import (
     AuthResponse,
     DriverCreate, DriverOut, DriverUpdate,
@@ -58,6 +59,21 @@ async def lifespan(app: FastAPI):
     # FALSE (not 0) — Postgres requires a boolean literal here; SQLite accepts both.
     ensure_column("events", "is_public", "BOOLEAN NOT NULL DEFAULT FALSE")
     ensure_column("event_members", "role", "VARCHAR(10) NOT NULL DEFAULT 'read'")
+
+    # Paywall column. The on_add callback fires only the very first time the
+    # column is created — that's when we grandfather every existing event as
+    # paid so current users don't suddenly hit a paywall on races they've
+    # already been working on.
+    def _grandfather_existing_events():
+        from sqlalchemy import update as sa_update
+        with SessionLocal() as db:
+            db.execute(sa_update(Event).values(is_paid=True))
+            db.commit()
+            logging.getLogger("paywall").info("Grandfathered all existing events as paid")
+    ensure_column(
+        "events", "is_paid", "BOOLEAN NOT NULL DEFAULT FALSE",
+        on_add=_grandfather_existing_events,
+    )
     # On startup, no scraper task is running yet — clear any leftover
     # is_tracking=true rows so the UI doesn't lie.
     from sqlalchemy import update as sa_update
@@ -612,6 +628,111 @@ def delete_event_member(
     db.delete(m)
     db.commit()
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Paywall (Stripe)
+#
+# Per-event $20 AUD pay-per-race. Three endpoints:
+#   * POST /api/events/{id}/checkout       — make a Stripe Checkout Session
+#   * POST /api/events/{id}/apply_code     — redeem a free-unlock bypass code
+#   * POST /api/stripe/webhook             — Stripe -> us, marks event paid
+#
+# Sharing a paid event automatically grants paid access to its members because
+# `is_paid` lives on the event, not on the user.
+# ---------------------------------------------------------------------------
+
+class CheckoutOut(BaseModel):
+    url: str
+
+
+@app.post("/api/events/{event_id}/checkout", response_model=CheckoutOut)
+def create_checkout(
+    event_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Owner pays for the event. Other members can't pay on the owner's behalf —
+    this keeps billing simple (one paying user per event)."""
+    if not stripe_paywall.is_paywall_active():
+        raise HTTPException(503, "paywall is not configured on this server")
+    ev = get_user_event_owner(event_id, user, db)
+    if ev.is_paid:
+        raise HTTPException(409, "this event is already paid for")
+    try:
+        url = stripe_paywall.create_checkout_session(
+            event_id=ev.id,
+            event_name=ev.name,
+            user_id=user.id,
+            user_email=user.email,
+        )
+    except Exception as e:
+        logging.getLogger("paywall").exception("create_checkout failed")
+        raise HTTPException(503, f"couldn't create Stripe checkout: {e}")
+    return CheckoutOut(url=url)
+
+
+class ApplyCodeRequest(BaseModel):
+    code: str
+
+
+@app.post("/api/events/{event_id}/apply_code", response_model=EventOut)
+def apply_bypass_code(
+    event_id: int,
+    payload: ApplyCodeRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Redeem a free-unlock code (set in STRIPE_BYPASS_CODES). Stripe-managed
+    promotion codes for partial discounts are entered at the Stripe Checkout page
+    instead — this endpoint is only for codes that bypass payment entirely."""
+    ev = get_user_event_owner(event_id, user, db)
+    if ev.is_paid:
+        # Idempotent — re-applying a code on an already-paid event is a no-op.
+        return ev
+    if not stripe_paywall.is_bypass_code(payload.code):
+        raise HTTPException(400, "that code isn't valid")
+    ev.is_paid = True
+    db.commit()
+    db.refresh(ev)
+    logging.getLogger("paywall").info(
+        "Event %s marked paid via bypass code by user %s", ev.id, user.id
+    )
+    return with_role(ev, ROLE_OWNER)
+
+
+@app.post("/api/stripe/webhook")
+async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
+    """Stripe -> us. Marks the event paid when checkout completes.
+    The signature header is verified against STRIPE_WEBHOOK_SECRET so we
+    don't trust unsigned posts."""
+    if not stripe_paywall.is_paywall_active():
+        raise HTTPException(503, "paywall is not configured on this server")
+    payload = await request.body()
+    signature = request.headers.get("stripe-signature", "")
+    try:
+        event = stripe_paywall.parse_webhook(payload, signature)
+    except Exception as e:
+        logging.getLogger("paywall").warning("Bad webhook signature: %s", e)
+        raise HTTPException(400, "bad signature")
+
+    if event.get("type") == "checkout.session.completed":
+        session = event["data"]["object"]
+        meta = session.get("metadata") or {}
+        try:
+            event_id = int(meta.get("event_id", "0"))
+        except (TypeError, ValueError):
+            event_id = 0
+        if event_id:
+            ev = db.get(Event, event_id)
+            if ev and not ev.is_paid:
+                ev.is_paid = True
+                db.commit()
+                logging.getLogger("paywall").info(
+                    "Event %s marked paid via Stripe checkout %s", event_id, session.get("id")
+                )
+    # Stripe just needs a 2xx — anything else triggers retries.
+    return {"received": True}
 
 
 # ---------------------------------------------------------------------------

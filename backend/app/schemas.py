@@ -1,5 +1,6 @@
+import os
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class SignupRequest(BaseModel):
@@ -82,7 +83,18 @@ class EventOut(BaseModel):
     created_at: datetime
     min_lap_warning_ms: int = 72_000
     is_public: bool = False
+    is_paid: bool = False
     role: str | None = None   # set per-request by the endpoint: 'owner' | 'write' | 'read'
+
+    @field_validator("is_paid", mode="after")
+    @classmethod
+    def _override_when_paywall_disabled(cls, v: bool) -> bool:
+        # When STRIPE_SECRET_KEY is unset (e.g. local dev) the paywall is dormant
+        # — report every event as paid so the frontend modal stays out of the way.
+        # The DB column is left untouched; this only changes serialised responses.
+        if not os.environ.get("STRIPE_SECRET_KEY"):
+            return True
+        return v
 
 
 class DriverCreate(BaseModel):
