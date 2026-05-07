@@ -1151,15 +1151,34 @@ document.addEventListener("click", async (e) => {
     return;
   }
 
-  // Driver picker — toggle open/closed
+  // Driver picker — toggle open/closed.
+  // The dropdown uses position:fixed (so it isn't clipped by the laps table's
+  // overflow:auto), so we set top/left from the trigger's bounding rect.
   const togglePicker = e.target.closest('[data-act="toggle-driver-picker"]');
   if (togglePicker) {
     e.preventDefault();
     e.stopPropagation();
     const picker = togglePicker.closest('.driver-picker');
     const wasOpen = picker.classList.contains("open");
-    document.querySelectorAll(".driver-picker.open").forEach((p) => p.classList.remove("open"));
-    if (!wasOpen) picker.classList.add("open");
+    // Close any open pickers (and clear positioning so reopen recomputes fresh).
+    document.querySelectorAll(".driver-picker.open").forEach((p) => {
+      p.classList.remove("open");
+      const opts = p.querySelector(".driver-options");
+      if (opts) { opts.style.top = ""; opts.style.left = ""; opts.style.minWidth = ""; }
+    });
+    if (!wasOpen) {
+      picker.classList.add("open");
+      const opts = picker.querySelector(".driver-options");
+      if (opts) {
+        const r = togglePicker.getBoundingClientRect();
+        const dropdownH = 6 + 28 * (drivers.length + 1); // rough estimate
+        // Flip above if not enough space below.
+        const flip = (r.bottom + dropdownH > window.innerHeight) && (r.top > dropdownH);
+        opts.style.top = flip ? `${r.top - dropdownH - 4}px` : `${r.bottom + 4}px`;
+        opts.style.left = `${r.left}px`;
+        opts.style.minWidth = `${Math.max(150, r.width)}px`;
+      }
+    }
     return;
   }
   // Driver picker — pick an option

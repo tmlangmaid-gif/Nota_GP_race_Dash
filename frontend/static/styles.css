@@ -30,18 +30,37 @@ html.light {
   --us: #b8881e;
 }
 
-/* Theme toggle button in the page header, injected by theme.js. */
+/* Theme toggle pill — fixed in the bottom-right corner, persists across
+   pages, injected by /static/theme.js. */
 #theme-toggle {
-  font-size: 14px;
-  padding: 4px 10px;
-  background: var(--panel-2);
+  position: fixed;
+  bottom: 14px;
+  right: 14px;
+  z-index: 9999;
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 999px;
-  color: var(--text);
-  cursor: pointer;
-  line-height: 1;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  font-size: 12px;
 }
-#theme-toggle:hover { filter: brightness(1.1); }
+#theme-toggle button {
+  background: transparent;
+  border: none;
+  padding: 5px 14px;
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+#theme-toggle button:hover:not(.active) { color: var(--text); }
+#theme-toggle button.active {
+  background: var(--accent);
+  color: white;
+}
 
 * { box-sizing: border-box; }
 
@@ -543,10 +562,11 @@ td.lap-time-cell {
 .driver-picker .caret { color: var(--muted); font-size: 10px; margin-left: 2px; }
 
 .driver-picker .driver-options {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 200;
+  /* position: fixed so the dropdown escapes the laps-table overflow:auto
+     container and isn't clipped. JS positions it under the trigger button
+     at open time. */
+  position: fixed;
+  z-index: 1000;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 6px;

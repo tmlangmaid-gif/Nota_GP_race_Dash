@@ -1,16 +1,20 @@
 // Theme toggle: persists "rd_theme" = "light" | "dark" in localStorage and
-// injects a sun/moon button into every page's header.
+// renders a fixed-position Light/Dark pill in the bottom-right of every page.
 //
 // MUST be loaded synchronously in <head> BEFORE the stylesheet so that the
 // `html.light` class is set before CSS evaluates — otherwise a user with
 // "light" saved sees a brief flash of dark.
 
 (function () {
-  // 1. Apply persisted theme as early as possible.
+  // 1. Apply persisted theme as early as possible (no flash).
+  //    Default = light (race days are usually outside in daylight).
   try {
-    var saved = localStorage.getItem("rd_theme") || "dark";
+    var saved = localStorage.getItem("rd_theme") || "light";
     if (saved === "light") document.documentElement.classList.add("light");
-  } catch (e) { /* localStorage unavailable; default = dark */ }
+  } catch (e) {
+    // localStorage unavailable — still apply light as the default.
+    document.documentElement.classList.add("light");
+  }
 
   function isLight() {
     return document.documentElement.classList.contains("light");
@@ -20,32 +24,45 @@
     if (light) document.documentElement.classList.add("light");
     else document.documentElement.classList.remove("light");
     try { localStorage.setItem("rd_theme", light ? "light" : "dark"); } catch (e) {}
-    var btn = document.getElementById("theme-toggle");
-    if (btn) btn.textContent = light ? "🌙" : "☀️";
-    // Let other code (e.g. Chart.js) react if it wants to.
+    refreshUI();
+    // Other code can listen for this (e.g. workflow.html re-renders Mermaid).
     window.dispatchEvent(new Event("rd-theme-change"));
   }
 
-  // Expose a global toggle for other scripts/inline buttons.
+  // Expose for any other code that wants it.
   window.toggleTheme = function () { setTheme(!isLight()); };
 
-  // 2. Inject toggle button into the page header on DOM ready.
+  function refreshUI() {
+    var wrap = document.getElementById("theme-toggle");
+    if (!wrap) return;
+    var lightActive = isLight();
+    wrap.querySelectorAll("button").forEach(function (b) {
+      b.classList.toggle("active", (b.dataset.mode === "light") === lightActive);
+    });
+  }
+
+  // 2. Inject the fixed-position pill once <body> exists. Body-level + fixed
+  //    position means no other JS that touches the header can wipe it.
   function inject() {
-    var header = document.querySelector("header.top");
-    if (!header) return;
-    if (header.querySelector("#theme-toggle")) return;
-
-    var btn = document.createElement("button");
-    btn.id = "theme-toggle";
-    btn.title = "Toggle light / dark theme";
-    btn.textContent = isLight() ? "🌙" : "☀️";
-    btn.addEventListener("click", function () { setTheme(!isLight()); });
-
-    // Drop it into the rightmost .row in the header (next to user-bar/buttons),
-    // or fall back to the header itself.
-    var rows = header.querySelectorAll(":scope > .row");
-    var target = rows.length ? rows[rows.length - 1] : header;
-    target.insertBefore(btn, target.firstChild);
+    if (document.getElementById("theme-toggle")) return;
+    if (!document.body) {
+      document.addEventListener("DOMContentLoaded", inject);
+      return;
+    }
+    var wrap = document.createElement("div");
+    wrap.id = "theme-toggle";
+    wrap.setAttribute("role", "group");
+    wrap.setAttribute("aria-label", "Theme");
+    wrap.innerHTML =
+      '<button type="button" data-mode="light">Light</button>' +
+      '<button type="button" data-mode="dark">Dark</button>';
+    wrap.addEventListener("click", function (e) {
+      var btn = e.target.closest("button[data-mode]");
+      if (!btn) return;
+      setTheme(btn.dataset.mode === "light");
+    });
+    document.body.appendChild(wrap);
+    refreshUI();
   }
 
   if (document.readyState === "loading") {
