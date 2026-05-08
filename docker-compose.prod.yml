@@ -50,7 +50,7 @@ services:
       # so old bookmarks / Stripe webhook URLs keep working until everything
       # is moved over. Drop the legacy host from this rule once the cutover
       # is fully complete.
-      - "traefik.http.routers.racedash.rule=Host(`${RACEDASH_HOST:?RACEDASH_HOST is required}`,`racedash.srv1595222.hstgr.cloud`)"
+      - "traefik.http.routers.racedash.rule=Host(`${RACEDASH_HOST:?RACEDASH_HOST is required}`) || Host(`racedash.srv1595222.hstgr.cloud`)"
       - "traefik.http.routers.racedash.entrypoints=websecure"
       - "traefik.http.routers.racedash.tls.certresolver=letsencrypt"
       - "traefik.http.services.racedash.loadbalancer.server.port=8000"
