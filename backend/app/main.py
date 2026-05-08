@@ -19,11 +19,13 @@ from sqlalchemy.orm import Session
 from .db import Base, engine, ensure_column, get_db, SessionLocal
 from .email_sender import send_event_invite_email, send_password_reset_email
 from .natsoft_browser import browser as natsoft_browser
-from .models import AuthToken, Driver, Event, EventInvite, EventMember, Lap, PasswordResetToken, ScraperLog, TrackedCar, User
+from .models import AuthToken, BypassCode, Driver, Event, EventInvite, EventMember, Lap, PasswordResetToken, ScraperLog, TrackedCar, User
 from . import stripe_paywall
 from .schemas import (
     AuthResponse,
     DriverCreate, DriverOut, DriverUpdate,
+    AdminEventOut, AdminUserOut,
+    BypassCodeCreate, BypassCodeOut,
     DeleteMeRequest,
     EventCreate, EventOut, EventUpdate,
     EventMemberCreate, EventMemberOut, EventMembershipOut, EventMemberUpdate,
@@ -137,6 +139,27 @@ def get_current_user(
     if not user:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "user no longer exists")
     return user
+
+
+# Admin auth — driven entirely by the ADMIN_EMAILS env var (comma-separated,
+# case-insensitive). No DB column to keep admin-ness a config concern, not
+# data; rotates with a server restart.
+def is_admin_email(email: str) -> bool:
+    raw = os.environ.get("ADMIN_EMAILS", "")
+    return email.strip().lower() in {e.strip().lower() for e in raw.split(",") if e.strip()}
+
+
+def require_admin(user: User = Depends(get_current_user)) -> User:
+    if not is_admin_email(user.email):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "admin access required")
+    return user
+
+
+def user_to_out(user: User) -> UserOut:
+    """Wrap a User in UserOut and stamp `is_admin` from env config."""
+    out = UserOut.model_validate(user)
+    out.is_admin = is_admin_email(user.email)
+    return out
 
 
 ROLE_OWNER = "owner"
@@ -266,7 +289,7 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
     token = gen_token()
     db.add(AuthToken(token=token, user_id=user.id))
     db.commit()
-    return AuthResponse(token=token, user=UserOut.model_validate(user))
+    return AuthResponse(token=token, user=user_to_out(user))
 
 
 @app.post("/api/auth/login", response_model=AuthResponse)
@@ -278,7 +301,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     token = gen_token()
     db.add(AuthToken(token=token, user_id=user.id))
     db.commit()
-    return AuthResponse(token=token, user=UserOut.model_validate(user))
+    return AuthResponse(token=token, user=user_to_out(user))
 
 
 @app.post("/api/auth/logout")
@@ -298,7 +321,7 @@ def logout(
 
 @app.get("/api/auth/me", response_model=UserOut)
 def me(user: User = Depends(get_current_user)):
-    return user
+    return user_to_out(user)
 
 
 @app.delete("/api/auth/me", status_code=204)
@@ -361,7 +384,7 @@ def update_me(
 
     db.commit()
     db.refresh(user)
-    return user
+    return user_to_out(user)
 
 
 # ---------------------------------------------------------------------------
@@ -851,7 +874,15 @@ def apply_bypass_code(
     if ev.is_paid:
         # Idempotent — re-applying a code on an already-paid event is a no-op.
         return ev
-    if not stripe_paywall.is_bypass_code(payload.code):
+    # Two sources for bypass codes: env var (STRIPE_BYPASS_CODES) and DB
+    # (admin-managed via /admin). Either is sufficient.
+    valid = stripe_paywall.is_bypass_code(payload.code)
+    if not valid:
+        match = db.execute(
+            select(BypassCode).where(func.upper(BypassCode.code) == payload.code.strip().upper())
+        ).scalar_one_or_none()
+        valid = match is not None
+    if not valid:
         raise HTTPException(400, "that code isn't valid")
     ev.is_paid = True
     db.commit()
@@ -894,6 +925,179 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                 )
     # Stripe just needs a 2xx — anything else triggers retries.
     return {"received": True}
+
+
+# ---------------------------------------------------------------------------
+# Admin panel
+#
+# Anyone whose email is in ADMIN_EMAILS env var can hit these. Lets the
+# operator see all users / events from the UI and manage DB-backed bypass
+# codes without redeploying.
+# ---------------------------------------------------------------------------
+
+@app.get("/api/admin/users", response_model=list[AdminUserOut])
+def admin_list_users(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    users = db.execute(select(User).order_by(User.created_at.desc())).scalars().all()
+    out: list[AdminUserOut] = []
+    for u in users:
+        events = db.scalar(
+            select(func.count()).select_from(Event).where(Event.user_id == u.id)
+        ) or 0
+        memberships = db.scalar(
+            select(func.count()).select_from(EventMember).where(EventMember.user_id == u.id)
+        ) or 0
+        out.append(AdminUserOut(
+            id=u.id, email=u.email, created_at=u.created_at,
+            event_count=events, membership_count=memberships,
+            is_admin=is_admin_email(u.email),
+        ))
+    return out
+
+
+@app.delete("/api/admin/users/{user_id}", status_code=204)
+async def admin_delete_user(
+    user_id: int,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Admin force-delete. Cascades wipe events the user owns, every
+    membership, every auth token. Admin can't delete themselves through
+    here (use /api/auth/me for that to keep the explicit-confirm flow)."""
+    if user_id == admin.id:
+        raise HTTPException(400, "use Account settings to delete your own account")
+    target = db.get(User, user_id)
+    if not target:
+        raise HTTPException(404, "user not found")
+    owned_event_ids = db.execute(
+        select(Event.id).where(Event.user_id == target.id)
+    ).scalars().all()
+    for eid in owned_event_ids:
+        if scraper_manager.is_running(eid):
+            await scraper_manager.stop(eid)
+    db.delete(target)
+    db.commit()
+    return Response(status_code=204)
+
+
+@app.get("/api/admin/events", response_model=list[AdminEventOut])
+def admin_list_events(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    events = db.execute(select(Event).order_by(Event.created_at.desc())).scalars().all()
+    out: list[AdminEventOut] = []
+    for e in events:
+        owner = db.get(User, e.user_id) if e.user_id else None
+        members = db.scalar(
+            select(func.count()).select_from(EventMember).where(EventMember.event_id == e.id)
+        ) or 0
+        out.append(AdminEventOut(
+            id=e.id, name=e.name, natsoft_url=e.natsoft_url,
+            is_tracking=e.is_tracking, is_paid=e.is_paid, is_public=e.is_public,
+            created_at=e.created_at,
+            owner_email=(owner.email if owner else "(deleted)"),
+            member_count=members,
+        ))
+    return out
+
+
+class AdminEventPaidUpdate(BaseModel):
+    is_paid: bool
+
+
+@app.patch("/api/admin/events/{event_id}/paid", response_model=AdminEventOut)
+def admin_set_event_paid(
+    event_id: int,
+    payload: AdminEventPaidUpdate,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Manually flip is_paid on any event — useful for comping a friend or
+    recovering an event whose Stripe webhook didn't land."""
+    ev = db.get(Event, event_id)
+    if not ev:
+        raise HTTPException(404, "event not found")
+    ev.is_paid = bool(payload.is_paid)
+    db.commit()
+    db.refresh(ev)
+    owner = db.get(User, ev.user_id) if ev.user_id else None
+    members = db.scalar(
+        select(func.count()).select_from(EventMember).where(EventMember.event_id == ev.id)
+    ) or 0
+    return AdminEventOut(
+        id=ev.id, name=ev.name, natsoft_url=ev.natsoft_url,
+        is_tracking=ev.is_tracking, is_paid=ev.is_paid, is_public=ev.is_public,
+        created_at=ev.created_at,
+        owner_email=(owner.email if owner else "(deleted)"),
+        member_count=members,
+    )
+
+
+@app.delete("/api/admin/events/{event_id}", status_code=204)
+async def admin_delete_event(
+    event_id: int,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    ev = db.get(Event, event_id)
+    if not ev:
+        raise HTTPException(404, "event not found")
+    if scraper_manager.is_running(ev.id):
+        await scraper_manager.stop(ev.id)
+    db.delete(ev)
+    db.commit()
+    return Response(status_code=204)
+
+
+@app.get("/api/admin/bypass_codes", response_model=list[BypassCodeOut])
+def admin_list_bypass_codes(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    return db.execute(
+        select(BypassCode).order_by(BypassCode.created_at.desc())
+    ).scalars().all()
+
+
+@app.post("/api/admin/bypass_codes", response_model=BypassCodeOut)
+def admin_create_bypass_code(
+    payload: BypassCodeCreate,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    code = (payload.code or "").strip()
+    if not code:
+        raise HTTPException(400, "code can't be empty")
+    if len(code) > 80:
+        raise HTTPException(400, "code is too long (max 80 characters)")
+    existing = db.execute(
+        select(BypassCode).where(func.upper(BypassCode.code) == code.upper())
+    ).scalar_one_or_none()
+    if existing:
+        raise HTTPException(409, "that code already exists")
+    desc = (payload.description or "").strip() or None
+    bc = BypassCode(code=code, description=desc, created_by_user_id=admin.id)
+    db.add(bc)
+    db.commit()
+    db.refresh(bc)
+    return bc
+
+
+@app.delete("/api/admin/bypass_codes/{code_id}", status_code=204)
+def admin_delete_bypass_code(
+    code_id: int,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    bc = db.get(BypassCode, code_id)
+    if not bc:
+        raise HTTPException(404, "code not found")
+    db.delete(bc)
+    db.commit()
+    return Response(status_code=204)
 
 
 # ---------------------------------------------------------------------------
@@ -1327,3 +1531,7 @@ if FRONTEND_DIR.exists():
     @app.get("/legal")
     def legal_page():
         return FileResponse(FRONTEND_DIR / "legal.html")
+
+    @app.get("/admin")
+    def admin_page():
+        return FileResponse(FRONTEND_DIR / "admin.html")

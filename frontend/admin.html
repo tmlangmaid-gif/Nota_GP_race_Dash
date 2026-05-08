@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Race Dash — Admin</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="/static/theme.js"></script>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <style>
+    main.admin { max-width: 1100px; }
+    .admin-tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+    .admin-tabs button { padding: 6px 14px; }
+    .admin-tabs button.active { background: var(--accent); color: white; border-color: var(--accent); }
+    .admin-section { display: none; }
+    .admin-section.active { display: block; }
+    .admin-table { width: 100%; }
+    .admin-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+    .admin-table td { font-size: 13px; vertical-align: middle; }
+    .admin-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .admin-actions { display: flex; gap: 6px; }
+    .admin-actions button { padding: 4px 10px; font-size: 12px; }
+    .small { font-size: 12px; color: var(--muted); }
+    #access-denied { color: var(--bad); padding: 18px; text-align: center; }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="row">
+      <a href="/">←</a>
+      <h1>Admin</h1>
+      <span class="tag" style="background: rgba(255,210,74,0.15); color: var(--us); border-color: var(--us);">staff only</span>
+    </div>
+    <div class="row">
+      <span style="color: var(--border); margin: 0 4px;">|</span>
+      <span id="user-bar" class="row" style="gap: 8px;"></span>
+    </div>
+  </header>
+
+  <main class="admin">
+
+    <div id="access-denied" style="display:none">
+      <h2>Not authorised.</h2>
+      <p>This page is only accessible to admin users.
+        Add your email to <code>ADMIN_EMAILS</code> on the server and restart the backend.</p>
+    </div>
+
+    <div id="admin-content" style="display:none">
+      <div class="admin-tabs">
+        <button data-tab="users" class="active">Users</button>
+        <button data-tab="events">Events</button>
+        <button data-tab="codes">Bypass codes</button>
+      </div>
+
+      <section id="tab-users" class="admin-section active panel">
+        <div class="row" style="justify-content: space-between; align-items: baseline; margin-bottom: 8px;">
+          <h2 style="margin:0;">Users</h2>
+          <span id="users-count" class="small"></span>
+        </div>
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>ID</th><th>Email</th><th>Signed up</th><th class="num">Events</th><th class="num">Memberships</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="users-tbody"></tbody>
+        </table>
+      </section>
+
+      <section id="tab-events" class="admin-section panel">
+        <div class="row" style="justify-content: space-between; align-items: baseline; margin-bottom: 8px;">
+          <h2 style="margin:0;">Events</h2>
+          <span id="events-count" class="small"></span>
+        </div>
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>ID</th><th>Name</th><th>Owner</th><th>Created</th><th>Status</th><th>Paid</th><th class="num">Members</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="events-tbody"></tbody>
+        </table>
+      </section>
+
+      <section id="tab-codes" class="admin-section panel">
+        <div class="row" style="justify-content: space-between; align-items: baseline; margin-bottom: 8px;">
+          <h2 style="margin:0;">Bypass codes</h2>
+          <span class="small">Codes here unlock events for free. Codes set in the
+            <code>STRIPE_BYPASS_CODES</code> env var also work and are not shown here.</span>
+        </div>
+
+        <div class="row" style="gap: 8px; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border);">
+          <input type="text" id="new-code" placeholder="Code (e.g. PITLANE)" style="flex: 0 0 220px;" />
+          <input type="text" id="new-code-desc" placeholder="Description (optional)" style="flex: 1;" />
+          <button id="add-code-btn" class="primary">Add code</button>
+        </div>
+        <div id="codes-msg" class="small" style="margin-bottom: 8px; min-height: 1em;"></div>
+
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>Code</th><th>Description</th><th>Created</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="codes-tbody"></tbody>
+        </table>
+      </section>
+    </div>
+
+  </main>
+
+  <script src="/static/config.js"></script>
+  <script src="/static/auth.js"></script>
+  <script src="/static/api.js"></script>
+  <script src="/static/header-bar.js"></script>
+  <script src="/static/admin.js"></script>
+</body>
+</html>

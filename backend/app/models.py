@@ -102,6 +102,20 @@ class EventMember(Base):
     )
 
 
+class BypassCode(Base):
+    """A free-unlock code an admin has created via the admin panel.
+    Stored alongside the env-var STRIPE_BYPASS_CODES (both are checked in
+    apply_code). Storing in DB lets admins add/remove codes from the UI
+    without restarting the backend."""
+    __tablename__ = "bypass_codes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(80), unique=True, nullable=False, index=True)
+    description: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+
+
 class EventInvite(Base):
     """A pending invite for an email that doesn't yet have a Race Dash account.
     When that user signs up, the signup flow looks up all invites for their

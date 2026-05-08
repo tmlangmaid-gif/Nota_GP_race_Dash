@@ -18,6 +18,9 @@ class UserOut(BaseModel):
     id: int
     email: str
     created_at: datetime
+    # Computed server-side from ADMIN_EMAILS env var on every /me call.
+    # Not stored on the User row, so admin-ness is config, not data.
+    is_admin: bool = False
 
 
 class AuthResponse(BaseModel):
@@ -200,3 +203,39 @@ class LeaderboardRow(BaseModel):
     last_lap_ms: int | None
     avg_lap_ms: int | None
     position: int | None  # most recent known position
+
+
+# ---------- Admin panel ----------
+
+class AdminUserOut(BaseModel):
+    id: int
+    email: str
+    created_at: datetime
+    event_count: int = 0
+    membership_count: int = 0
+    is_admin: bool = False
+
+
+class AdminEventOut(BaseModel):
+    id: int
+    name: str
+    natsoft_url: str | None
+    is_tracking: bool
+    is_paid: bool
+    is_public: bool
+    created_at: datetime
+    owner_email: str
+    member_count: int = 0
+
+
+class BypassCodeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    code: str
+    description: str | None
+    created_at: datetime
+
+
+class BypassCodeCreate(BaseModel):
+    code: str
+    description: str | None = None
