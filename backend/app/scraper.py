@@ -25,7 +25,7 @@ import asyncio
 import logging
 import random
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Iterable
 
 from sqlalchemy import select
@@ -68,6 +68,30 @@ logger = logging.getLogger("scraper")
 POLL_INTERVAL_SEC = 3.0
 PAGE_LOAD_TIMEOUT_MS = 30_000
 TABLE_WAIT_TIMEOUT_MS = 20_000
+
+# Hard cap on how long a single tracking session runs without intervention.
+# Scrapers exit themselves after this elapsed wall-clock time and clear the
+# event's is_tracking flag. The user has to click "Start tracking" again to
+# resume — protects us from forgotten scrapers running indefinitely.
+TRACKING_AUTO_STOP_HOURS = 12
+
+
+def _compute_auto_stop_deadline(event_id: int) -> datetime:
+    """Read tracking_started_at from the DB and return the wall-clock moment
+    at which this scraper task must stop. Falls back to 'now' if the column
+    is unset, so the deadline is always 12 hours from start."""
+    with SessionLocal() as db:
+        ev = db.get(Event, event_id)
+        start_at = ev.tracking_started_at if (ev and ev.tracking_started_at) else datetime.utcnow()
+    return start_at + timedelta(hours=TRACKING_AUTO_STOP_HOURS)
+
+
+def _mark_tracking_stopped(event_id: int) -> None:
+    with SessionLocal() as db:
+        ev = db.get(Event, event_id)
+        if ev:
+            ev.is_tracking = False
+            db.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -311,11 +335,17 @@ async def run_demo(event_id: int, stop_event: asyncio.Event) -> None:
     cars = ["7", "12", "23", "44", "88"]
     base_times_ms = {c: random.randint(85_000, 105_000) for c in cars}
     lap_counters = {c: 0 for c in cars}
+    deadline = _compute_auto_stop_deadline(event_id)
     logger.info(f"event {event_id}: demo scraper started with cars={cars} "
-                f"(cap {DEMO_MAX_LAPS_PER_CAR} laps/car)")
+                f"(cap {DEMO_MAX_LAPS_PER_CAR} laps/car, auto-stop at {deadline.isoformat()})")
     log_event(event_id, "info", f"demo scraper started — cars {cars}, cap {DEMO_MAX_LAPS_PER_CAR} laps/car")
 
     while not stop_event.is_set():
+        if datetime.utcnow() >= deadline:
+            logger.info(f"event {event_id}: 12-hour auto-stop reached")
+            log_event(event_id, "info", f"auto-stopped after {TRACKING_AUTO_STOP_HOURS}h — start tracking again to resume")
+            _mark_tracking_stopped(event_id)
+            return
         if all(lap_counters[c] >= DEMO_MAX_LAPS_PER_CAR for c in cars):
             logger.info(f"event {event_id}: demo reached {DEMO_MAX_LAPS_PER_CAR} laps/car cap; "
                         f"keeping task alive (stop tracking to release)")
@@ -428,8 +458,16 @@ async def run_natsoft(event_id: int, url: str, stop_event: asyncio.Event) -> Non
             # The JS app needs a moment to connect to the WebSocket + render.
             await asyncio.sleep(INITIAL_RENDER_WAIT_SEC)
 
+            deadline = _compute_auto_stop_deadline(event_id)
+            logger.info(f"event {event_id}: auto-stop deadline {deadline.isoformat()}")
+
             last_change_summary: tuple[int, int] | None = None
             while not stop_event.is_set():
+                if datetime.utcnow() >= deadline:
+                    logger.info(f"event {event_id}: 12-hour auto-stop reached")
+                    log_event(event_id, "info", f"auto-stopped after {TRACKING_AUTO_STOP_HOURS}h — start tracking again to resume")
+                    _mark_tracking_stopped(event_id)
+                    break
                 try:
                     rows = await extract_laps(page)
                     if not rows:

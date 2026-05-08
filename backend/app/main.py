@@ -77,12 +77,53 @@ async def lifespan(app: FastAPI):
         "events", "is_paid", "BOOLEAN NOT NULL DEFAULT FALSE",
         on_add=_grandfather_existing_events,
     )
-    # On startup, no scraper task is running yet — clear any leftover
-    # is_tracking=true rows so the UI doesn't lie.
-    from sqlalchemy import update as sa_update
+
+    # Tracking start timestamp + 12-hour auto-stop. On first add, backfill
+    # currently-tracking events with NOW() so the new auto-stop kicks in
+    # 12h from now, not retroactively.
+    def _backfill_tracking_started_at():
+        from sqlalchemy import update as sa_update
+        with SessionLocal() as db:
+            db.execute(
+                sa_update(Event)
+                .where(Event.is_tracking.is_(True))
+                .values(tracking_started_at=datetime.utcnow())
+            )
+            db.commit()
+    ensure_column(
+        "events", "tracking_started_at", "TIMESTAMP",
+        on_add=_backfill_tracking_started_at,
+    )
+
+    # Resume scrapers that were running before this container restart. This
+    # replaces the old "wipe is_tracking on boot" behaviour: backend restarts
+    # were silently killing scrapers, leaving the UI with stale lap data.
+    # Events past their 12-hour auto-stop window are unflagged instead.
+    from datetime import timedelta as _td
+    AUTO_STOP_HOURS = 12
     with SessionLocal() as db:
-        db.execute(sa_update(Event).values(is_tracking=False))
+        rows = db.execute(select(Event).where(Event.is_tracking.is_(True))).scalars().all()
+        resumable: list[tuple[int, str]] = []
+        for ev in rows:
+            if not ev.natsoft_url:
+                ev.is_tracking = False
+                continue
+            if ev.tracking_started_at is None:
+                # Legacy event tracking before the column existed — start the
+                # 12hr clock from now so it eventually auto-stops.
+                ev.tracking_started_at = datetime.utcnow()
+            elapsed = datetime.utcnow() - ev.tracking_started_at
+            if elapsed >= _td(hours=AUTO_STOP_HOURS):
+                ev.is_tracking = False
+                continue
+            resumable.append((ev.id, ev.natsoft_url))
         db.commit()
+    for eid, url in resumable:
+        try:
+            await scraper_manager.start(eid, url)
+            logging.getLogger("scraper").info("resumed scraper for event %s after backend restart", eid)
+        except Exception:
+            logging.getLogger("scraper").exception("failed to resume scraper for event %s", eid)
     yield
     await scraper_manager.stop_all()
     await natsoft_browser.close()
@@ -598,6 +639,12 @@ async def start_tracking(
     ev = get_user_event_write(event_id, user, db)
     if not ev.natsoft_url:
         raise HTTPException(400, "set natsoft_url on the event first (or use demo:// for synthetic data)")
+    # Reset the 12-hour auto-stop timer every time tracking is started fresh.
+    # If the scraper is already running this is a no-op (manager.start guards
+    # on is_running), but we still bump the timer here so a fresh "Start" click
+    # gives a fresh 12-hour window even if there was a stale flag.
+    ev.tracking_started_at = datetime.utcnow()
+    db.commit()
     await scraper_manager.start(event_id, ev.natsoft_url)
     db.refresh(ev)
     return ev

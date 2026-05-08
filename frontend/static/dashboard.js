@@ -100,15 +100,40 @@ function isOurCar(vehicle) {
 // Header / controls
 // ---------------------------------------------------------------------------
 
+// Backend auto-stops scrapers 12 hours after they were started — keep this
+// in sync with TRACKING_AUTO_STOP_HOURS in backend/app/scraper.py.
+const TRACKING_AUTO_STOP_HOURS = 12;
+
+function fmtDurationShort(ms) {
+  if (ms < 0) ms = 0;
+  const totalMin = Math.floor(ms / 60_000);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h <= 0) return `${m}m`;
+  return `${h}h ${m}m`;
+}
+
 function renderHeader() {
   $("#event-name").textContent = event_.name;
   const tag = $("#status-tag");
   if (event_.is_tracking) {
+    let label = "LIVE";
+    if (event_.tracking_started_at) {
+      const startMs = new Date(event_.tracking_started_at).getTime();
+      const remaining = startMs + TRACKING_AUTO_STOP_HOURS * 3600_000 - Date.now();
+      // Show how much tracking time is left so the user can see the scraper
+      // is still alive even after switching apps. Updates on every tick.
+      label = `LIVE · ${fmtDurationShort(remaining)} left`;
+    }
     tag.className = "tag live";
-    tag.textContent = "LIVE";
+    tag.textContent = label;
+    tag.title = event_.tracking_started_at
+      ? `Tracking started ${new Date(event_.tracking_started_at).toLocaleString()} — auto-stops ${TRACKING_AUTO_STOP_HOURS}h after start`
+      : "";
   } else {
     tag.className = "tag idle";
     tag.textContent = "idle";
+    tag.title = "";
   }
   $("#track-btn").textContent = event_.is_tracking ? "Stop tracking" : "Start tracking";
 

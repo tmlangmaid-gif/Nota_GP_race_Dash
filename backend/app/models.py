@@ -64,6 +64,10 @@ class Event(Base):
     natsoft_url: Mapped[str | None] = mapped_column(String(500))
     our_vehicle_number: Mapped[str | None] = mapped_column(String(20))
     is_tracking: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # When the most recent start_tracking call fired. Used to enforce the
+    # 12-hour auto-stop, and to compute a remaining-time banner on the
+    # dashboard. Reset every time tracking is started fresh.
+    tracking_started_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     # Laps faster than this are flagged with a red tint as suspicious / record-pace.
     # Default 1:12.000 = 72 000 ms. Adjustable per event via the settings modal.

@@ -107,6 +107,7 @@ class EventOut(BaseModel):
     natsoft_url: str | None
     our_vehicle_number: str | None
     is_tracking: bool
+    tracking_started_at: datetime | None = None
     created_at: datetime
     min_lap_warning_ms: int = 72_000
     is_public: bool = False
