@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from .db import Base, engine, ensure_column, get_db, SessionLocal
 from .email_sender import send_event_invite_email, send_password_reset_email
 from .natsoft_browser import browser as natsoft_browser
-from .models import AuthToken, BypassCode, Driver, Event, EventInvite, EventMember, Lap, PasswordResetToken, ScraperLog, TrackedCar, User
+from .models import AuthToken, BypassCode, Driver, Event, EventInvite, EventMember, Lap, PasswordResetToken, ScraperLog, TrackedCar, User, UserDriver
 from . import stripe_paywall
 from .schemas import (
     AuthResponse,
@@ -37,6 +37,7 @@ from .schemas import (
     SignupRequest,
     TrackedCarCreate, TrackedCarOut, TrackedCarUpdate,
     UpdateMeRequest,
+    UserDriverCreate, UserDriverOut, UserDriverUpdate,
     UserOut,
 )
 from .scraper import manager as scraper_manager
@@ -94,6 +95,33 @@ async def lifespan(app: FastAPI):
         "events", "tracking_started_at", "TIMESTAMP",
         on_add=_backfill_tracking_started_at,
     )
+
+    # First-run backfill of the UserDriver pool from existing per-event drivers.
+    # Cheap idempotent check: only runs if user_drivers is currently empty.
+    with SessionLocal() as db:
+        if (db.scalar(select(func.count()).select_from(UserDriver)) or 0) == 0:
+            seen: dict[tuple[int, str], UserDriver] = {}
+            rows = db.execute(
+                select(Event.user_id, Driver.name, Driver.color)
+                .join(Event, Event.id == Driver.event_id)
+                .where(Event.user_id.isnot(None))
+            ).all()
+            for user_id, name, color in rows:
+                if not name or not name.strip():
+                    continue
+                key = (user_id, name.strip().lower())
+                if key in seen:
+                    if color and not seen[key].color:
+                        seen[key].color = color
+                    continue
+                ud = UserDriver(user_id=user_id, name=name.strip(), color=color)
+                db.add(ud)
+                seen[key] = ud
+            if seen:
+                db.commit()
+                logging.getLogger("migrate").info(
+                    "Backfilled %d UserDriver rows from existing per-event drivers", len(seen)
+                )
 
     # Resume scrapers that were running before this container restart. This
     # replaces the old "wipe is_tracking on boot" behaviour: backend restarts
@@ -1151,6 +1179,31 @@ def admin_delete_bypass_code(
 # Drivers
 # ---------------------------------------------------------------------------
 
+def _upsert_user_driver(db: Session, user_id: int, name: str, color: str | None) -> UserDriver | None:
+    """Add or refresh a UserDriver pool entry for `user_id`. Matches case-
+    insensitively on name. On hit, updates last_used_at and fills in `color`
+    if the existing pool entry has no colour yet. Caller is responsible for
+    db.commit()."""
+    if not name or not name.strip():
+        return None
+    name = name.strip()
+    existing = db.execute(
+        select(UserDriver).where(
+            UserDriver.user_id == user_id,
+            func.lower(UserDriver.name) == name.lower(),
+        )
+    ).scalar_one_or_none()
+    if existing:
+        existing.last_used_at = datetime.utcnow()
+        if color and not existing.color:
+            existing.color = color
+        return existing
+    ud = UserDriver(user_id=user_id, name=name, color=color)
+    db.add(ud)
+    db.flush()
+    return ud
+
+
 @app.get("/api/events/{event_id}/drivers", response_model=list[DriverOut])
 def list_drivers(
     event_id: int,
@@ -1185,14 +1238,28 @@ def add_driver(
         )
     ).scalar_one_or_none()
     if existing:
+        # Still touch the user pool so it reflects the latest "last used".
+        _upsert_user_driver(db, user.id, existing.name, existing.color)
+        db.commit()
         return existing
+    # If the user already has a pool entry for this name (perhaps with a colour
+    # set from another event), inherit that colour into this per-event Driver
+    # so cross-event recognition is visually consistent.
+    pool_entry = db.execute(
+        select(UserDriver).where(
+            UserDriver.user_id == user.id,
+            func.lower(UserDriver.name) == payload.name.strip().lower(),
+        )
+    ).scalar_one_or_none()
+    inherited_color = payload.color or (pool_entry.color if pool_entry else None)
     d = Driver(
         event_id=event_id,
         name=payload.name,
-        color=payload.color,
+        color=inherited_color,
         vehicle_number=payload.vehicle_number,
     )
     db.add(d)
+    _upsert_user_driver(db, user.id, payload.name, inherited_color)
     db.commit()
     db.refresh(d)
     return d
@@ -1223,6 +1290,9 @@ def update_driver(
         d.name = new_name
     if "color" in data:
         d.color = data["color"]
+    # Mirror the rename / colour update back to the user's pool so the next
+    # event's quick-pick reflects the change.
+    _upsert_user_driver(db, user.id, d.name, d.color)
     db.commit()
     db.refresh(d)
     return d
@@ -1241,6 +1311,103 @@ def delete_driver(
     db.delete(d)
     db.commit()
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Personal driver pool ("My drivers")
+#
+# A per-user list of drivers reusable across events. Auto-populated whenever
+# the user adds/edits a driver inside any event. Settings page lets them
+# manage it directly. Editing/deleting a pool entry does NOT cascade to per-
+# event Driver rows or to historical lap-driver assignments.
+# ---------------------------------------------------------------------------
+
+@app.get("/api/drivers/mine", response_model=list[UserDriverOut])
+def list_my_drivers(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return db.execute(
+        select(UserDriver)
+        .where(UserDriver.user_id == user.id)
+        .order_by(UserDriver.last_used_at.desc())
+    ).scalars().all()
+
+
+@app.post("/api/drivers/mine", response_model=UserDriverOut)
+def create_my_driver(
+    payload: UserDriverCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    name = (payload.name or "").strip()
+    if not name:
+        raise HTTPException(400, "name cannot be empty")
+    existing = db.execute(
+        select(UserDriver).where(
+            UserDriver.user_id == user.id,
+            func.lower(UserDriver.name) == name.lower(),
+        )
+    ).scalar_one_or_none()
+    if existing:
+        # Idempotent: refresh last_used_at + colour and return the existing row.
+        existing.last_used_at = datetime.utcnow()
+        if payload.color and not existing.color:
+            existing.color = payload.color
+        db.commit()
+        db.refresh(existing)
+        return existing
+    ud = UserDriver(user_id=user.id, name=name, color=payload.color)
+    db.add(ud)
+    db.commit()
+    db.refresh(ud)
+    return ud
+
+
+@app.patch("/api/drivers/mine/{ud_id}", response_model=UserDriverOut)
+def update_my_driver(
+    ud_id: int,
+    payload: UserDriverUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    ud = db.get(UserDriver, ud_id)
+    if not ud or ud.user_id != user.id:
+        raise HTTPException(404, "driver not found")
+    data = payload.model_dump(exclude_unset=True)
+    if "name" in data and data["name"] is not None:
+        new_name = data["name"].strip()
+        if not new_name:
+            raise HTTPException(400, "name cannot be empty")
+        if new_name.lower() != ud.name.lower():
+            clash = db.execute(
+                select(UserDriver).where(
+                    UserDriver.user_id == user.id,
+                    func.lower(UserDriver.name) == new_name.lower(),
+                )
+            ).scalar_one_or_none()
+            if clash and clash.id != ud.id:
+                raise HTTPException(409, "you already have a driver with that name")
+        ud.name = new_name
+    if "color" in data:
+        ud.color = data["color"]
+    db.commit()
+    db.refresh(ud)
+    return ud
+
+
+@app.delete("/api/drivers/mine/{ud_id}", status_code=204)
+def delete_my_driver(
+    ud_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    ud = db.get(UserDriver, ud_id)
+    if not ud or ud.user_id != user.id:
+        raise HTTPException(404, "driver not found")
+    db.delete(ud)
+    db.commit()
+    return Response(status_code=204)
 
 
 # ---------------------------------------------------------------------------

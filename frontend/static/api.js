@@ -56,6 +56,12 @@ const API = {
   updateDriver: (driverId, body) => api(`/api/drivers/${driverId}`, { method: "PATCH", body }),
   deleteDriver: (driverId) => api(`/api/drivers/${driverId}`, { method: "DELETE" }),
 
+  // personal driver pool — "My drivers" — reusable across events
+  listMyDrivers: () => api(`/api/drivers/mine`),
+  addMyDriver: (body) => api(`/api/drivers/mine`, { method: "POST", body }),
+  updateMyDriver: (id, body) => api(`/api/drivers/mine/${id}`, { method: "PATCH", body }),
+  deleteMyDriver: (id) => api(`/api/drivers/mine/${id}`, { method: "DELETE" }),
+
   // tracked cars
   listTracked: (eventId) => api(`/api/events/${eventId}/tracked`),
   addTracked: (eventId, body) => api(`/api/events/${eventId}/tracked`, { method: "POST", body }),

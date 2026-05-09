@@ -59,6 +59,28 @@
     </section>
 
     <section class="panel">
+      <h2>My drivers</h2>
+      <p class="muted" style="font-size:13px;">
+        Drivers you've added in any of your events live here so they're easy
+        to reuse next race weekend. Adding or editing a driver inside an event
+        keeps this list in sync. Editing or deleting an entry here only
+        affects your suggestion list — it doesn't rename or remove drivers
+        that are already attached to existing events.
+      </p>
+
+      <div class="row" style="gap: 8px; margin-bottom: 8px;">
+        <input type="text" id="md-name" placeholder="Driver name" style="flex: 1;" />
+        <input type="color" id="md-color" value="#4f9dff" title="Default colour" style="width: 38px; padding: 0; height: 32px;" />
+        <button id="md-add-btn" class="primary">Add</button>
+      </div>
+      <div id="md-msg" class="muted" style="font-size: 12px; min-height: 1em; margin-bottom: 8px;"></div>
+      <div id="md-list"></div>
+      <div id="md-empty" class="muted" style="display:none; padding: 6px 0;">
+        Your driver list is empty. Add one above, or just add drivers inside an event — they'll appear here automatically.
+      </div>
+    </section>
+
+    <section class="panel">
       <h2 style="color: var(--bad);">Delete account</h2>
       <p class="muted" style="font-size:13px;">
         Permanently deletes your account, every event you own, all lap data,
@@ -112,6 +134,85 @@
           msg.textContent = err.message;
         }
       });
+
+      // ----- My drivers -----
+      function escMD(s) {
+        return String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+      }
+
+      async function refreshMyDrivers() {
+        let rows;
+        try { rows = await API.listMyDrivers(); }
+        catch (err) {
+          document.getElementById("md-list").innerHTML = `<div class="muted">Couldn't load: ${escMD(err.message)}</div>`;
+          return;
+        }
+        const wrap = document.getElementById("md-list");
+        const empty = document.getElementById("md-empty");
+        if (!rows.length) {
+          wrap.innerHTML = "";
+          empty.style.display = "block";
+          return;
+        }
+        empty.style.display = "none";
+        wrap.innerHTML = rows.map((d) => `
+          <div class="member-row" data-md-id="${d.id}" style="grid-template-columns: max-content 1fr max-content max-content;">
+            <span class="dot" style="display:inline-block; width:14px; height:14px; border-radius:50%; background:${escMD(d.color || "#888")}; border:1px solid #00000020;"></span>
+            <input type="text" class="md-name-input" value="${escMD(d.name)}" data-id="${d.id}" data-orig="${escMD(d.name)}" style="background: transparent; border: 1px solid transparent;" />
+            <input type="color" class="md-color-input" value="${escMD(d.color || '#4f9dff')}" data-id="${d.id}" style="width: 28px; height: 24px; padding: 0;" />
+            <button class="icon-btn" data-act="md-delete" data-id="${d.id}" data-name="${escMD(d.name)}">Remove</button>
+          </div>
+        `).join("");
+      }
+
+      document.getElementById("md-add-btn").addEventListener("click", async () => {
+        const nameEl = document.getElementById("md-name");
+        const colorEl = document.getElementById("md-color");
+        const msg = document.getElementById("md-msg");
+        const name = nameEl.value.trim();
+        if (!name) { msg.style.color = "var(--bad)"; msg.textContent = "Enter a name first."; return; }
+        msg.style.color = "var(--muted)"; msg.textContent = "Saving…";
+        try {
+          await API.addMyDriver({ name, color: colorEl.value });
+          nameEl.value = "";
+          msg.style.color = "var(--accent-2)";
+          msg.textContent = `Added "${name}".`;
+          await refreshMyDrivers();
+        } catch (err) {
+          msg.style.color = "var(--bad)"; msg.textContent = err.message;
+        }
+      });
+
+      // Delegated handler for the dynamic rows.
+      document.addEventListener("click", async (e) => {
+        const del = e.target.closest('[data-act="md-delete"]');
+        if (del) {
+          if (!confirm(`Remove "${del.dataset.name}" from your driver list? Existing events keep their drivers; this just clears the quick-add suggestion.`)) return;
+          try { await API.deleteMyDriver(del.dataset.id); await refreshMyDrivers(); }
+          catch (err) { alert("Remove failed: " + err.message); }
+        }
+      });
+
+      // Inline rename: blur the name input → save if it actually changed.
+      document.addEventListener("change", async (e) => {
+        if (e.target.classList.contains("md-color-input")) {
+          const id = e.target.dataset.id;
+          try { await API.updateMyDriver(id, { color: e.target.value }); await refreshMyDrivers(); }
+          catch (err) { alert("Update failed: " + err.message); }
+        }
+      });
+      document.addEventListener("blur", async (e) => {
+        if (e.target.classList && e.target.classList.contains("md-name-input")) {
+          const id = e.target.dataset.id;
+          const orig = e.target.dataset.orig || "";
+          const next = e.target.value.trim();
+          if (!next || next === orig) return;
+          try { await API.updateMyDriver(id, { name: next }); await refreshMyDrivers(); }
+          catch (err) { alert("Rename failed: " + err.message); e.target.value = orig; }
+        }
+      }, true);   // capture-phase: 'blur' doesn't bubble
+
+      refreshMyDrivers();
 
       document.getElementById("delete-form").addEventListener("submit", async (e) => {
         e.preventDefault();

@@ -27,6 +27,7 @@ let vehicles = [];
 let laps = [];
 let trackedCars = [];   // [{id, slot, vehicle_number, current_driver_id}]
 let currentUser = null;
+let myDrivers = [];     // user's personal pool, used for quick-pick chips below the add-driver input
 let members = [];        // [{id, user_id, email, role}], owner-only for now
 let carsView = "both";   // "1" | "2" | "both" — which car-column(s) to show
 let chartAllDrivers = null;
@@ -322,13 +323,37 @@ function renderCarDriversHTML(tc) {
           </details>`;
       }).join("");
 
+  // Quick-pick chips: pool drivers we haven't already added to this car.
+  // The user's personal pool (myDrivers) is loaded once at boot and refreshed
+  // on each tick. Chips show drivers from previous events so the user doesn't
+  // have to retype names.
+  const carDriverNames = new Set(
+    drivers.filter((d) => d.vehicle_number === tc.vehicle_number).map((d) => d.name.toLowerCase())
+  );
+  const poolUnused = myDrivers.filter((md) => !carDriverNames.has(md.name.toLowerCase())).slice(0, 24);
+  const chipsHTML = poolUnused.length
+    ? `<div class="driver-pool-chips" style="margin: -4px 0 10px 0; display: flex; flex-wrap: wrap; gap: 4px;">
+         <span class="muted" style="font-size: 11px; align-self: center; margin-right: 2px;">Quick-add:</span>
+         ${poolUnused.map((md) => `
+           <button class="icon-btn pool-chip"
+                   data-act="add-pool-driver"
+                   data-tracked="${tc.id}"
+                   data-name="${escapeHtml(md.name)}"
+                   data-color="${escapeHtml(md.color || "")}"
+                   style="font-size: 11px; padding: 2px 8px; ${md.color ? `border-color:${md.color}; color:${md.color};` : ""}">
+             ${escapeHtml(md.name)}
+           </button>`).join("")}
+       </div>`
+    : "";
+
   return `
     <section class="panel">
       <h3>Drivers</h3>
-      <div class="row" style="margin-bottom: 10px;">
+      <div class="row" style="margin-bottom: 6px;">
         <input type="text" class="new-car-driver-input" data-tracked="${tc.id}" placeholder="Driver name" style="flex: 1;" />
         <button class="primary" data-act="add-car-driver" data-tracked="${tc.id}">Add</button>
       </div>
+      ${chipsHTML}
       ${cardsHTML}
     </section>`;
 }
@@ -902,15 +927,16 @@ function renderLeaderboard(rows) {
 // ---------------------------------------------------------------------------
 
 async function loadAll() {
-  const [ev, drv, veh, lp, lb, tc] = await Promise.all([
+  const [ev, drv, veh, lp, lb, tc, mine] = await Promise.all([
     API.getEvent(EVENT_ID),
     API.listDrivers(EVENT_ID),
     API.listVehicles(EVENT_ID),
     API.listLaps(EVENT_ID),
     API.leaderboard(EVENT_ID),
     API.listTracked(EVENT_ID),
+    API.listMyDrivers().catch(() => []),
   ]);
-  event_ = ev; drivers = drv; vehicles = veh; laps = lp; trackedCars = tc;
+  event_ = ev; drivers = drv; vehicles = veh; laps = lp; trackedCars = tc; myDrivers = mine;
   renderAll(lb);
 }
 
@@ -1134,7 +1160,7 @@ document.addEventListener("click", async (e) => {
     return;
   }
 
-  // Per-car: Add driver
+  // Per-car: Add driver (typed-in name)
   const addCarDriver = e.target.closest('[data-act="add-car-driver"]');
   if (addCarDriver) {
     e.preventDefault();
@@ -1148,6 +1174,27 @@ document.addEventListener("click", async (e) => {
     try {
       await API.addDriver(EVENT_ID, { name, vehicle_number: tc.vehicle_number });
       if (inp) inp.value = "";
+      await loadAll();
+    } catch (err) {
+      alert("Add driver failed: " + err.message);
+    }
+    return;
+  }
+
+  // Per-car: Quick-add a driver from the user's personal pool. Adds an
+  // event-scoped Driver row using the pool name (and inherits its colour
+  // server-side). Same outcome as typing the name and clicking Add.
+  const poolChip = e.target.closest('[data-act="add-pool-driver"]');
+  if (poolChip) {
+    e.preventDefault();
+    e.stopPropagation();
+    const trackedId = parseInt(poolChip.dataset.tracked, 10);
+    const tc = trackedCars.find((t) => t.id === trackedId);
+    if (!tc) return;
+    const name = poolChip.dataset.name;
+    const color = poolChip.dataset.color || null;
+    try {
+      await API.addDriver(EVENT_ID, { name, color, vehicle_number: tc.vehicle_number });
       await loadAll();
     } catch (err) {
       alert("Add driver failed: " + err.message);

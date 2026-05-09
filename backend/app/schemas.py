@@ -146,6 +146,26 @@ class DriverUpdate(BaseModel):
     vehicle_number: str | None = None
 
 
+class UserDriverOut(BaseModel):
+    """A user's personal pool of drivers — reusable across events."""
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    color: str | None
+    created_at: datetime
+    last_used_at: datetime
+
+
+class UserDriverCreate(BaseModel):
+    name: str
+    color: str | None = None
+
+
+class UserDriverUpdate(BaseModel):
+    name: str | None = None
+    color: str | None = None
+
+
 class LapOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int

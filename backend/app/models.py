@@ -182,6 +182,31 @@ class Driver(Base):
     )
 
 
+class UserDriver(Base):
+    """A user's personal pool of drivers. Whenever they add a driver in any
+    event, an entry is upserted here keyed on (user_id, lower(name)). The
+    settings page lets them manage this list directly. The dashboard offers
+    pool entries as quick-pick suggestions when adding a driver to a new
+    event so they don't have to retype the same names every weekend.
+
+    This is a lookup pool — the per-event Driver row is what laps actually
+    reference (Lap.driver_id). Editing or deleting a UserDriver does NOT
+    cascade to existing per-event Driver rows; their names are independent
+    once created."""
+    __tablename__ = "user_drivers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    color: Mapped[str | None] = mapped_column(String(20))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    last_used_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_user_driver_user_name"),
+    )
+
+
 class Lap(Base):
     __tablename__ = "laps"
 
