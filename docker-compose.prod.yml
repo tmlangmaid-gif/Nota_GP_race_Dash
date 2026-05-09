@@ -54,6 +54,20 @@ services:
       - "traefik.http.routers.racedash.entrypoints=websecure"
       - "traefik.http.routers.racedash.tls.certresolver=letsencrypt"
       - "traefik.http.services.racedash.loadbalancer.server.port=8000"
+      # --- Security headers middleware ---
+      # HSTS: 1 year, signal browsers to always use HTTPS for this domain.
+      # X-Content-Type-Options: stop MIME-sniffing tricks.
+      # X-Frame-Options: DENY → can't be loaded inside another site's iframe (clickjacking).
+      # Referrer-Policy: don't leak the full URL when the user clicks an outgoing link.
+      # X-XSS-Protection: legacy header but harmless and still respected by older clients.
+      - "traefik.http.middlewares.racedash-sec.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.racedash-sec.headers.stsIncludeSubdomains=true"
+      - "traefik.http.middlewares.racedash-sec.headers.stsPreload=true"
+      - "traefik.http.middlewares.racedash-sec.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.racedash-sec.headers.frameDeny=true"
+      - "traefik.http.middlewares.racedash-sec.headers.referrerPolicy=strict-origin-when-cross-origin"
+      - "traefik.http.middlewares.racedash-sec.headers.browserXssFilter=true"
+      - "traefik.http.routers.racedash.middlewares=racedash-sec"
 
 volumes:
   racedash-db:

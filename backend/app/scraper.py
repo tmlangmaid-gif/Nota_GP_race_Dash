@@ -264,6 +264,13 @@ async def extract_laps(page) -> list[dict]:
 # Persisting
 # ---------------------------------------------------------------------------
 
+# Sanity bounds on parsed lap data — protects the dashboard from a buggy
+# Natsoft layout change or a maliciously-crafted demo URL writing nonsense.
+MIN_LAP_TIME_MS = 1_000          # 1 second
+MAX_LAP_TIME_MS = 60 * 60 * 1000  # 1 hour
+MAX_LAP_NUMBER = 100_000
+
+
 def upsert_laps(db: Session, event_id: int, rows: Iterable[dict]) -> int:
     """Insert new laps; update mutable fields (time/position) on existing rows.
 
@@ -289,8 +296,13 @@ def upsert_laps(db: Session, event_id: int, rows: Iterable[dict]) -> int:
     for r in rows:
         vehicle = r["vehicle_number"]
         lap_number = r["lap_number"]
-        if lap_number <= 0:
-            # Skip rows we couldn't read a lap number for; they would all collide on (event,vehicle,0)
+        lap_time_ms = r["lap_time_ms"]
+        if lap_number <= 0 or lap_number > MAX_LAP_NUMBER:
+            # Skip rows we couldn't read a lap number for, or that look bogus.
+            # Without the >0 guard they'd all collide on (event,vehicle,0).
+            continue
+        if lap_time_ms < MIN_LAP_TIME_MS or lap_time_ms > MAX_LAP_TIME_MS:
+            # Out-of-band time — don't pollute the chart axes.
             continue
         existing = db.execute(
             select(Lap).where(

@@ -18,8 +18,9 @@ class UserOut(BaseModel):
     id: int
     email: str
     created_at: datetime
-    # Computed server-side from ADMIN_EMAILS env var on every /me call.
-    # Not stored on the User row, so admin-ness is config, not data.
+    # Backed by the User.is_admin DB column. Synced from ADMIN_EMAILS on
+    # backend startup, but only for emails that already correspond to a User
+    # row — new signups never auto-promote, even if their email is on the list.
     is_admin: bool = False
 
 
@@ -260,3 +261,14 @@ class BypassCodeOut(BaseModel):
 class BypassCodeCreate(BaseModel):
     code: str
     description: str | None = None
+
+
+class AdminAuditLogOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    ts: datetime
+    actor_email: str
+    action: str
+    target_kind: str | None
+    target_id: int | None
+    detail: str | None

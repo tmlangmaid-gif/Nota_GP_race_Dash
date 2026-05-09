@@ -49,6 +49,7 @@
         <button data-tab="users" class="active">Users</button>
         <button data-tab="events">Events</button>
         <button data-tab="codes">Bypass codes</button>
+        <button data-tab="audit">Audit log</button>
       </div>
 
       <section id="tab-users" class="admin-section active panel">
@@ -78,6 +79,19 @@
             </tr>
           </thead>
           <tbody id="events-tbody"></tbody>
+        </table>
+      </section>
+
+      <section id="tab-audit" class="admin-section panel">
+        <div class="row" style="justify-content: space-between; align-items: baseline; margin-bottom: 8px;">
+          <h2 style="margin:0;">Audit log</h2>
+          <span class="small">Every privileged action — promotions, deletions, comped events, code edits — newest first. Capped at 5000 rows total.</span>
+        </div>
+        <table class="admin-table">
+          <thead>
+            <tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Detail</th></tr>
+          </thead>
+          <tbody id="audit-tbody"></tbody>
         </table>
       </section>
 

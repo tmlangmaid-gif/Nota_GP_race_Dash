@@ -16,6 +16,13 @@ COPY frontend ./frontend
 ENV DATA_DIR=/data
 RUN mkdir -p /data
 
+# Drop root inside the container — limits blast radius if anything in the
+# backend ends up code-execing. The Playwright base image already ships a
+# non-root `pwuser` that has access to its bundled Chromium browsers, so we
+# just chown the app + data dirs to it and switch.
+RUN chown -R pwuser:pwuser /app /data
+USER pwuser
+
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8000
 

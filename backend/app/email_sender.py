@@ -14,6 +14,7 @@ you can read the link from `docker logs` and complete the flow manually.
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 import os
@@ -23,6 +24,14 @@ import urllib.request
 logger = logging.getLogger("email_sender")
 
 DEFAULT_FRONTEND_BASE_URL = "https://nota-gp-race-dash.vercel.app"
+
+
+def _redact(email: str) -> str:
+    """Trim an email to first-letter + ***@domain for log output."""
+    if not email or "@" not in email:
+        return "<redacted>"
+    local, _, domain = email.partition("@")
+    return f"{local[:1]}***@{domain}"
 
 
 def frontend_base_url() -> str:
@@ -62,7 +71,7 @@ def send_password_reset_email(to_email: str, token: str) -> None:
     if not api_key:
         logger.warning(
             "RESEND_API_KEY not set — would have emailed %s with reset link: %s",
-            to_email, reset_url,
+            _redact(to_email), reset_url,
         )
         return
 
@@ -88,7 +97,7 @@ def send_password_reset_email(to_email: str, token: str) -> None:
         "html": html,
         "text": text,
     })
-    logger.info("Password reset email sent to %s", to_email)
+    logger.info("Password reset email sent to %s", _redact(to_email))
 
 
 def send_event_invite_email(
@@ -110,11 +119,17 @@ def send_event_invite_email(
 
     Falls back to a log line if Resend isn't configured."""
     base = frontend_base_url()
+    # Escape every user-controlled string before inlining into the HTML body —
+    # event names, emails, etc. are operator/inviter-controlled and could
+    # otherwise inject anchor tags / images into the recipient's mail client.
+    safe_event = html.escape(event_name or "")
+    safe_owner = html.escape(owner_email or "")
+    safe_recipient = html.escape(to_email or "")
     if has_account:
         link = f"{base}/dashboard?event={event_id}"
         cta = "Open your dashboard"
         first_line = (
-            f"{owner_email} added you to <strong>{event_name}</strong> on Race Dash."
+            f"{safe_owner} added you to <strong>{safe_event}</strong> on Race Dash."
         )
         body_extra = (
             "Live laps from this event are now visible on your Race Dash home page."
@@ -123,19 +138,19 @@ def send_event_invite_email(
         link = f"{base}/login"
         cta = "Sign up to Race Dash"
         first_line = (
-            f"{owner_email} has invited you to view <strong>{event_name}</strong> on Race Dash — "
+            f"{safe_owner} has invited you to view <strong>{safe_event}</strong> on Race Dash — "
             "a live timing dashboard for racing."
         )
         body_extra = (
-            f"Sign up using <strong>this email address</strong> ({to_email}) and "
-            f"you'll automatically see <strong>{event_name}</strong> on your dashboard."
+            f"Sign up using <strong>this email address</strong> ({safe_recipient}) and "
+            f"you'll automatically see <strong>{safe_event}</strong> on your dashboard."
         )
 
     api_key = os.environ.get("RESEND_API_KEY")
     if not api_key:
         logger.warning(
             "RESEND_API_KEY not set — would have emailed %s about invite to event %s (%s): %s",
-            to_email, event_id, event_name, link,
+            _redact(to_email), event_id, event_name, link,
         )
         return
 
@@ -149,11 +164,19 @@ def send_event_invite_email(
         f'<p><a href="{link}" style="display:inline-block;padding:10px 18px;background:#2f7bff;color:#fff;border-radius:6px;text-decoration:none">{cta}</a></p>'
         f'<p style="font-size:12px;color:#666">Or paste this link into your browser: {link}</p>'
     )
-    text = (
-        f"{first_line.replace('<strong>','').replace('</strong>','')}\n\n"
-        f"{body_extra.replace('<strong>','').replace('</strong>','')}\n\n"
-        f"{cta}: {link}\n"
+    # Plain-text part — strip the HTML tags we just inserted, but use the
+    # unescaped originals so the text part doesn't show literal `&amp;` etc.
+    plain_first = (
+        f"{owner_email} added you to {event_name} on Race Dash."
+        if has_account
+        else f"{owner_email} has invited you to view {event_name} on Race Dash — a live timing dashboard for racing."
     )
+    plain_body = (
+        "Live laps from this event are now visible on your Race Dash home page."
+        if has_account
+        else f"Sign up using this email address ({to_email}) and you'll automatically see {event_name} on your dashboard."
+    )
+    text = f"{plain_first}\n\n{plain_body}\n\n{cta}: {link}\n"
 
     subject = (
         f"You've been added to {event_name} on Race Dash"
@@ -168,4 +191,4 @@ def send_event_invite_email(
         "html": html,
         "text": text,
     })
-    logger.info("Event-invite email sent to %s for event %s", to_email, event_id)
+    logger.info("Event-invite email sent to %s for event %s", _redact(to_email), event_id)

@@ -10,6 +10,7 @@
   // Add small-tag versions of the admin endpoints to the global API helper.
   Object.assign(API, {
     adminListUsers:        ()       => api(`/api/admin/users`),
+    adminSetUserAdmin:     (id, p)  => api(`/api/admin/users/${id}/admin`, { method: "PATCH", body: { is_admin: p } }),
     adminDeleteUser:       (id)     => api(`/api/admin/users/${id}`, { method: "DELETE" }),
     adminListEvents:       ()       => api(`/api/admin/events`),
     adminSetEventPaid:     (id, p)  => api(`/api/admin/events/${id}/paid`, { method: "PATCH", body: { is_paid: p } }),
@@ -17,6 +18,7 @@
     adminListBypassCodes:  ()       => api(`/api/admin/bypass_codes`),
     adminCreateBypassCode: (body)   => api(`/api/admin/bypass_codes`, { method: "POST", body }),
     adminDeleteBypassCode: (id)     => api(`/api/admin/bypass_codes/${id}`, { method: "DELETE" }),
+    adminListAudit:        ()       => api(`/api/admin/audit?limit=200`),
   });
 
   function escapeHtml(s) {
@@ -50,18 +52,27 @@
     try { rows = await API.adminListUsers(); }
     catch (err) { alert("Failed to load users: " + err.message); return; }
     $("#users-count").textContent = `${rows.length} user${rows.length === 1 ? "" : "s"}`;
-    $("#users-tbody").innerHTML = rows.map((u) => `
-      <tr>
-        <td>${u.id}</td>
-        <td>${escapeHtml(u.email)} ${u.is_admin ? '<span class="tag" style="background:rgba(255,210,74,0.15);color:var(--us);border-color:var(--us);font-size:10px;padding:1px 5px;">admin</span>' : ""}</td>
-        <td class="small">${fmtDate(u.created_at)}</td>
-        <td class="num">${u.event_count}</td>
-        <td class="num">${u.membership_count}</td>
-        <td class="admin-actions">
-          ${u.is_admin ? "" : `<button class="danger" data-act="del-user" data-id="${u.id}" data-email="${escapeHtml(u.email)}">Delete</button>`}
-        </td>
-      </tr>
-    `).join("");
+    $("#users-tbody").innerHTML = rows.map((u) => {
+      const adminTag = u.is_admin
+        ? '<span class="tag" style="background:rgba(255,210,74,0.15);color:var(--us);border-color:var(--us);font-size:10px;padding:1px 5px;">admin</span>'
+        : "";
+      const adminBtn = u.is_admin
+        ? `<button data-act="demote-user" data-id="${u.id}" data-email="${escapeHtml(u.email)}">Revoke admin</button>`
+        : `<button data-act="promote-user" data-id="${u.id}" data-email="${escapeHtml(u.email)}">Make admin</button>`;
+      return `
+        <tr>
+          <td>${u.id}</td>
+          <td>${escapeHtml(u.email)} ${adminTag}</td>
+          <td class="small">${fmtDate(u.created_at)}</td>
+          <td class="num">${u.event_count}</td>
+          <td class="num">${u.membership_count}</td>
+          <td class="admin-actions">
+            ${adminBtn}
+            ${u.is_admin ? "" : `<button class="danger" data-act="del-user" data-id="${u.id}" data-email="${escapeHtml(u.email)}">Delete</button>`}
+          </td>
+        </tr>
+      `;
+    }).join("");
   }
 
   // ---- Events ----
@@ -121,28 +132,61 @@
 
     if (act === "del-user") {
       if (!confirm(`Delete user ${btn.dataset.email}? This wipes every event they own and all their data. This can't be undone.`)) return;
-      try { await API.adminDeleteUser(btn.dataset.id); await refreshUsers(); await refreshEvents(); }
+      try { await API.adminDeleteUser(btn.dataset.id); await refreshUsers(); await refreshEvents(); await refreshAudit(); }
       catch (err) { alert("Delete failed: " + err.message); }
+    }
+
+    if (act === "promote-user") {
+      if (!confirm(`Grant admin access to ${btn.dataset.email}? They'll see the Admin button and be able to manage every user, event, and bypass code.`)) return;
+      try { await API.adminSetUserAdmin(btn.dataset.id, true); await refreshUsers(); await refreshAudit(); }
+      catch (err) { alert("Promote failed: " + err.message); }
+    }
+
+    if (act === "demote-user") {
+      if (!confirm(`Revoke admin access from ${btn.dataset.email}?`)) return;
+      try { await API.adminSetUserAdmin(btn.dataset.id, false); await refreshUsers(); await refreshAudit(); }
+      catch (err) { alert("Demote failed: " + err.message); }
     }
 
     if (act === "toggle-paid") {
       const becomePaid = btn.dataset.current !== "true";
-      try { await API.adminSetEventPaid(btn.dataset.id, becomePaid); await refreshEvents(); }
+      try { await API.adminSetEventPaid(btn.dataset.id, becomePaid); await refreshEvents(); await refreshAudit(); }
       catch (err) { alert("Update failed: " + err.message); }
     }
 
     if (act === "del-event") {
       if (!confirm(`Delete event "${btn.dataset.name}"? All laps, drivers, and memberships go with it. Can't be undone.`)) return;
-      try { await API.adminDeleteEvent(btn.dataset.id); await refreshEvents(); await refreshUsers(); }
+      try { await API.adminDeleteEvent(btn.dataset.id); await refreshEvents(); await refreshUsers(); await refreshAudit(); }
       catch (err) { alert("Delete failed: " + err.message); }
     }
 
     if (act === "del-code") {
       if (!confirm(`Delete bypass code "${btn.dataset.code}"? Anyone who hadn't redeemed it yet will see "code not valid".`)) return;
-      try { await API.adminDeleteBypassCode(btn.dataset.id); await refreshCodes(); }
+      try { await API.adminDeleteBypassCode(btn.dataset.id); await refreshCodes(); await refreshAudit(); }
       catch (err) { alert("Delete failed: " + err.message); }
     }
   });
+
+  // ---- Audit log ----
+  async function refreshAudit() {
+    const tbody = document.getElementById("audit-tbody");
+    if (!tbody) return;
+    let rows;
+    try { rows = await API.adminListAudit(); }
+    catch (err) {
+      tbody.innerHTML = `<tr><td colspan="5" class="muted">Couldn't load: ${escapeHtml(err.message)}</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = rows.length ? rows.map((r) => `
+      <tr>
+        <td class="small">${fmtDate(r.ts)}</td>
+        <td>${escapeHtml(r.actor_email)}</td>
+        <td><code>${escapeHtml(r.action)}</code></td>
+        <td class="small">${escapeHtml(r.target_kind || "")}${r.target_id != null ? ` #${r.target_id}` : ""}</td>
+        <td class="small">${escapeHtml(r.detail || "")}</td>
+      </tr>
+    `).join("") : `<tr><td colspan="5" class="muted">No admin actions recorded yet.</td></tr>`;
+  }
 
   // ---- Add bypass code form ----
   document.getElementById("add-code-btn").addEventListener("click", async () => {
@@ -164,6 +208,7 @@
       msg.style.color = "var(--accent-2)";
       msg.textContent = `Added "${code}".`;
       await refreshCodes();
+      await refreshAudit();
     } catch (err) {
       msg.style.color = "var(--bad)";
       msg.textContent = err.message;
@@ -179,6 +224,6 @@
       return;
     }
     document.getElementById("admin-content").style.display = "block";
-    await Promise.all([refreshUsers(), refreshEvents(), refreshCodes()]);
+    await Promise.all([refreshUsers(), refreshEvents(), refreshCodes(), refreshAudit()]);
   })();
 })();

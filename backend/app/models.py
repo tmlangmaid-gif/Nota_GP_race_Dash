@@ -7,7 +7,9 @@ from .db import Base
 
 
 def default_token_expiry() -> datetime:
-    return datetime.utcnow() + timedelta(days=30)
+    # 14 days. Long enough that race-day usage doesn't hit the prompt mid-event,
+    # short enough that a leaked token doesn't outlive its usefulness for too long.
+    return datetime.utcnow() + timedelta(days=14)
 
 
 class User(Base):
@@ -17,6 +19,13 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    # Admin flag — synced from the ADMIN_EMAILS env var on backend startup,
+    # but only for emails that already correspond to existing User rows. New
+    # signups never land with is_admin=true even if their email is on the
+    # admin list, so an unregistered admin email can't be claimed by an
+    # attacker who guesses it. Manual promotion happens through the admin
+    # panel (or directly in SQL).
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
 class AuthToken(Base):
@@ -104,6 +113,24 @@ class EventMember(Base):
     __table_args__ = (
         UniqueConstraint("event_id", "user_id", name="uq_event_member_event_user"),
     )
+
+
+class AdminAuditLog(Base):
+    """A persistent record of every privileged action taken via /api/admin/*.
+    Lets us reconstruct who promoted whom, deleted what, comped which event.
+    Capped at a generous N rows (pruned in the writer) so the table doesn't
+    grow forever. The actor is identified by id+email-at-time-of-action so
+    the trail survives renames or deletions."""
+    __tablename__ = "admin_audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ts: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    actor_email: Mapped[str] = mapped_column(String(255), nullable=False)
+    action: Mapped[str] = mapped_column(String(80), nullable=False)
+    target_kind: Mapped[str | None] = mapped_column(String(40))   # 'user' | 'event' | 'bypass_code' | etc.
+    target_id: Mapped[int | None] = mapped_column(Integer)
+    detail: Mapped[str | None] = mapped_column(String(500))
 
 
 class BypassCode(Base):

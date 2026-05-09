@@ -11,20 +11,23 @@ import bcrypt
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .db import Base, engine, ensure_column, get_db, SessionLocal
 from .email_sender import send_event_invite_email, send_password_reset_email
 from .natsoft_browser import browser as natsoft_browser
-from .models import AuthToken, BypassCode, Driver, Event, EventInvite, EventMember, Lap, PasswordResetToken, ScraperLog, TrackedCar, User, UserDriver
+from .models import AdminAuditLog, AuthToken, BypassCode, Driver, Event, EventInvite, EventMember, Lap, PasswordResetToken, ScraperLog, TrackedCar, User, UserDriver
 from . import stripe_paywall
 from .schemas import (
     AuthResponse,
     DriverCreate, DriverOut, DriverUpdate,
-    AdminEventOut, AdminUserOut,
+    AdminAuditLogOut, AdminEventOut, AdminUserOut,
     BypassCodeCreate, BypassCodeOut,
     DeleteMeRequest,
     EventCreate, EventOut, EventUpdate,
@@ -96,6 +99,38 @@ async def lifespan(app: FastAPI):
         on_add=_backfill_tracking_started_at,
     )
 
+    # Admin flag on users. Stored in the DB now (was ADMIN_EMAILS-driven). The
+    # env var still seeds it on startup, but only for emails that already
+    # have a User row — that closes the "claim an unregistered admin email
+    # by signing up first" gap.
+    ensure_column("users", "is_admin", "BOOLEAN NOT NULL DEFAULT FALSE")
+    _admin_emails_raw = os.environ.get("ADMIN_EMAILS", "")
+    _admin_emails = {e.strip().lower() for e in _admin_emails_raw.split(",") if e.strip()}
+    if _admin_emails:
+        with SessionLocal() as db:
+            promoted = 0
+            unmatched: list[str] = []
+            for ae in _admin_emails:
+                u = db.execute(select(User).where(User.email == ae)).scalar_one_or_none()
+                if u is None:
+                    unmatched.append(ae)
+                    continue
+                if not u.is_admin:
+                    u.is_admin = True
+                    promoted += 1
+            if promoted:
+                db.commit()
+                logging.getLogger("admin").info(
+                    "Promoted %d existing user(s) to admin from ADMIN_EMAILS", promoted
+                )
+            if unmatched:
+                logging.getLogger("admin").warning(
+                    "ADMIN_EMAILS contains %d email(s) with no matching User row "
+                    "— they will NOT auto-promote on signup; ask the user to register, "
+                    "then restart the backend. Unmatched count: %d",
+                    len(unmatched), len(unmatched),
+                )
+
     # First-run backfill of the UserDriver pool from existing per-event drivers.
     # Cheap idempotent check: only runs if user_drivers is currently empty.
     with SessionLocal() as db:
@@ -159,7 +194,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Race Dash", lifespan=lifespan)
 
-_origins_env = os.environ.get("ALLOWED_ORIGINS", "*").strip()
+# CORS — fail loud if the operator forgot to set ALLOWED_ORIGINS rather than
+# silently fall back to wildcard. Local dev can opt back into "*" explicitly.
+_origins_env = os.environ.get("ALLOWED_ORIGINS", "").strip()
+if not _origins_env:
+    raise RuntimeError(
+        "ALLOWED_ORIGINS is not set. Set it to a comma-separated list of "
+        "frontend origins (e.g. 'https://example.com'), or '*' to allow any "
+        "origin (only safe for local dev)."
+    )
 allow_origins = ["*"] if _origins_env == "*" else [o.strip() for o in _origins_env.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -167,6 +210,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Rate-limiting — keyed by client IP. The proxy sets X-Forwarded-For so
+# get_remote_address sees the real public address rather than the Traefik
+# container. Limits scoped to specific endpoints below via @limiter.limit.
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": f"too many requests — try again shortly ({exc.detail})"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +243,15 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 def normalise_email(email: str) -> str:
     return email.strip().lower()
+
+
+def redact_email(email: str) -> str:
+    """Reduce an email to first-letter + ***@domain for log lines.
+    Keeps PII out of log files while still being useful for ops."""
+    if not email or "@" not in email:
+        return "<redacted>"
+    local, _, domain = email.partition("@")
+    return f"{local[:1]}***@{domain}"
 
 
 def gen_token() -> str:
@@ -210,25 +276,19 @@ def get_current_user(
     return user
 
 
-# Admin auth — driven entirely by the ADMIN_EMAILS env var (comma-separated,
-# case-insensitive). No DB column to keep admin-ness a config concern, not
-# data; rotates with a server restart.
-def is_admin_email(email: str) -> bool:
-    raw = os.environ.get("ADMIN_EMAILS", "")
-    return email.strip().lower() in {e.strip().lower() for e in raw.split(",") if e.strip()}
-
-
+# Admin auth — backed by the User.is_admin DB column. The lifespan startup
+# syncs this from ADMIN_EMAILS for users that already exist. New signups
+# never auto-become admin (closes the "claim an unregistered admin email"
+# gap), and admins manage other admins from the admin panel.
 def require_admin(user: User = Depends(get_current_user)) -> User:
-    if not is_admin_email(user.email):
+    if not user.is_admin:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "admin access required")
     return user
 
 
 def user_to_out(user: User) -> UserOut:
-    """Wrap a User in UserOut and stamp `is_admin` from env config."""
-    out = UserOut.model_validate(user)
-    out.is_admin = is_admin_email(user.email)
-    return out
+    """Wrap a User in UserOut so `is_admin` is included in the response."""
+    return UserOut.model_validate(user)
 
 
 ROLE_OWNER = "owner"
@@ -312,7 +372,8 @@ def health():
 # ---------------------------------------------------------------------------
 
 @app.post("/api/auth/signup", response_model=AuthResponse)
-def signup(payload: SignupRequest, db: Session = Depends(get_db)):
+@limiter.limit("10/hour")
+def signup(request: Request, payload: SignupRequest, db: Session = Depends(get_db)):
     email = normalise_email(payload.email)
     if "@" not in email or "." not in email.split("@")[-1]:
         raise HTTPException(400, "invalid email address")
@@ -320,7 +381,10 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
         raise HTTPException(400, "password must be at least 8 characters")
     existing = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
     if existing:
-        raise HTTPException(409, "an account with that email already exists")
+        # Slightly opaque message so this isn't a perfect email-enumeration
+        # oracle. Combined with the @limiter.limit("10/hour") rate limit
+        # above, mass-enumeration is impractical.
+        raise HTTPException(409, "couldn't create that account — try logging in or resetting your password")
     user = User(email=email, password_hash=hash_password(payload.password))
     db.add(user)
     db.commit()
@@ -352,7 +416,7 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
     if pending:
         db.commit()
         logging.getLogger("invite").info(
-            "Auto-claimed %d pending invite(s) for %s", len(pending), email
+            "Auto-claimed %d pending invite(s) for %s", len(pending), redact_email(email)
         )
 
     token = gen_token()
@@ -362,7 +426,8 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
 
 
 @app.post("/api/auth/login", response_model=AuthResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def login(request: Request, payload: LoginRequest, db: Session = Depends(get_db)):
     email = normalise_email(payload.email)
     user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
     if not user or not verify_password(payload.password, user.password_hash):
@@ -428,6 +493,7 @@ async def delete_me(
 @app.patch("/api/auth/me", response_model=UserOut)
 def update_me(
     payload: UpdateMeRequest,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -451,6 +517,22 @@ def update_me(
     if changing_password:
         user.password_hash = hash_password(payload.new_password)
 
+    # If credentials changed, invalidate every OTHER session — keep only the
+    # current request's token so the caller stays logged in. Mirrors what the
+    # password-reset flow does, defending against post-compromise persistence.
+    if changing_email or changing_password:
+        auth_header = request.headers.get("authorization", "") or ""
+        current_token = (
+            auth_header.split(" ", 1)[1].strip()
+            if auth_header.lower().startswith("bearer ") else ""
+        )
+        db.execute(
+            sa_delete(AuthToken).where(
+                AuthToken.user_id == user.id,
+                AuthToken.token != current_token,
+            )
+        )
+
     db.commit()
     db.refresh(user)
     return user_to_out(user)
@@ -463,7 +545,8 @@ def update_me(
 from sqlalchemy import delete as sa_delete
 
 @app.post("/api/auth/request_password_reset", status_code=204)
-def request_password_reset(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
+@limiter.limit("5/hour")
+def request_password_reset(request: Request, payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
     """Email the user a one-time reset link if their email is registered.
     We always return 204 so callers can't probe which emails have accounts."""
     email = normalise_email(payload.email)
@@ -489,7 +572,8 @@ def request_password_reset(payload: ForgotPasswordRequest, db: Session = Depends
 
 
 @app.post("/api/auth/reset_password")
-def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
+@limiter.limit("10/hour")
+def reset_password(request: Request, payload: ResetPasswordRequest, db: Session = Depends(get_db)):
     """Validate a reset token, set the new password, mark the token used,
     and invalidate all of this user's existing auth sessions."""
     pr = db.get(PasswordResetToken, payload.token)
@@ -936,7 +1020,9 @@ class ApplyCodeRequest(BaseModel):
 
 
 @app.post("/api/events/{event_id}/apply_code", response_model=EventOut)
+@limiter.limit("10/minute")
 def apply_bypass_code(
+    request: Request,
     event_id: int,
     payload: ApplyCodeRequest,
     user: User = Depends(get_current_user),
@@ -1010,6 +1096,51 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
 # codes without redeploying.
 # ---------------------------------------------------------------------------
 
+ADMIN_AUDIT_CAP = 5000  # rolling cap so the table doesn't grow forever
+
+
+def _audit(
+    db: Session,
+    actor: User,
+    action: str,
+    *,
+    target_kind: str | None = None,
+    target_id: int | None = None,
+    detail: str | None = None,
+) -> None:
+    """Append an admin-audit row + prune oldest entries past the cap.
+    Caller is responsible for db.commit() — typically called inside an
+    endpoint that's about to commit anyway."""
+    row = AdminAuditLog(
+        actor_user_id=actor.id,
+        actor_email=actor.email,
+        action=action,
+        target_kind=target_kind,
+        target_id=target_id,
+        detail=(detail[:500] if detail else None),
+    )
+    db.add(row)
+    # Cheap rolling cap. id is monotonic so we just delete anything below
+    # (latest_id - ADMIN_AUDIT_CAP).
+    latest = db.scalar(select(func.max(AdminAuditLog.id))) or 0
+    if latest > ADMIN_AUDIT_CAP:
+        db.execute(
+            sa_delete(AdminAuditLog).where(AdminAuditLog.id < (latest - ADMIN_AUDIT_CAP))
+        )
+
+
+@app.get("/api/admin/audit", response_model=list[AdminAuditLogOut])
+def admin_list_audit_log(
+    limit: int = 200,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Most recent admin actions, newest first. Capped at ADMIN_AUDIT_CAP rows total."""
+    return db.execute(
+        select(AdminAuditLog).order_by(AdminAuditLog.ts.desc()).limit(min(limit, 1000))
+    ).scalars().all()
+
+
 @app.get("/api/admin/users", response_model=list[AdminUserOut])
 def admin_list_users(
     admin: User = Depends(require_admin),
@@ -1027,9 +1158,49 @@ def admin_list_users(
         out.append(AdminUserOut(
             id=u.id, email=u.email, created_at=u.created_at,
             event_count=events, membership_count=memberships,
-            is_admin=is_admin_email(u.email),
+            is_admin=u.is_admin,
         ))
     return out
+
+
+class AdminUserPromoteRequest(BaseModel):
+    is_admin: bool
+
+
+@app.patch("/api/admin/users/{user_id}/admin", response_model=AdminUserOut)
+def admin_set_user_admin(
+    user_id: int,
+    payload: AdminUserPromoteRequest,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Promote / demote another user. Admins can't demote themselves through
+    this endpoint — that has to be done by another admin (or in SQL) so we
+    never lock the room with no key inside."""
+    if user_id == admin.id and not payload.is_admin:
+        raise HTTPException(400, "you can't demote yourself; ask another admin to do it")
+    target = db.get(User, user_id)
+    if not target:
+        raise HTTPException(404, "user not found")
+    target.is_admin = bool(payload.is_admin)
+    _audit(
+        db, admin,
+        "promote" if target.is_admin else "demote",
+        target_kind="user", target_id=target.id,
+        detail=f"is_admin -> {target.is_admin}",
+    )
+    db.commit()
+    db.refresh(target)
+    events = db.scalar(
+        select(func.count()).select_from(Event).where(Event.user_id == target.id)
+    ) or 0
+    memberships = db.scalar(
+        select(func.count()).select_from(EventMember).where(EventMember.user_id == target.id)
+    ) or 0
+    return AdminUserOut(
+        id=target.id, email=target.email, created_at=target.created_at,
+        event_count=events, membership_count=memberships, is_admin=target.is_admin,
+    )
 
 
 @app.delete("/api/admin/users/{user_id}", status_code=204)
@@ -1052,6 +1223,11 @@ async def admin_delete_user(
     for eid in owned_event_ids:
         if scraper_manager.is_running(eid):
             await scraper_manager.stop(eid)
+    _audit(
+        db, admin, "delete_user",
+        target_kind="user", target_id=target.id,
+        detail=f"deleted user {redact_email(target.email)} (owned {len(owned_event_ids)} event(s))",
+    )
     db.delete(target)
     db.commit()
     return Response(status_code=204)
@@ -1096,6 +1272,12 @@ def admin_set_event_paid(
     if not ev:
         raise HTTPException(404, "event not found")
     ev.is_paid = bool(payload.is_paid)
+    _audit(
+        db, admin,
+        "mark_paid" if ev.is_paid else "mark_unpaid",
+        target_kind="event", target_id=ev.id,
+        detail=f"event '{ev.name}' is_paid -> {ev.is_paid}",
+    )
     db.commit()
     db.refresh(ev)
     owner = db.get(User, ev.user_id) if ev.user_id else None
@@ -1122,6 +1304,11 @@ async def admin_delete_event(
         raise HTTPException(404, "event not found")
     if scraper_manager.is_running(ev.id):
         await scraper_manager.stop(ev.id)
+    _audit(
+        db, admin, "delete_event",
+        target_kind="event", target_id=ev.id,
+        detail=f"deleted event '{ev.name}'",
+    )
     db.delete(ev)
     db.commit()
     return Response(status_code=204)
@@ -1156,6 +1343,12 @@ def admin_create_bypass_code(
     desc = (payload.description or "").strip() or None
     bc = BypassCode(code=code, description=desc, created_by_user_id=admin.id)
     db.add(bc)
+    db.flush()
+    _audit(
+        db, admin, "create_bypass_code",
+        target_kind="bypass_code", target_id=bc.id,
+        detail=f"created code '{code}'",
+    )
     db.commit()
     db.refresh(bc)
     return bc
@@ -1170,6 +1363,11 @@ def admin_delete_bypass_code(
     bc = db.get(BypassCode, code_id)
     if not bc:
         raise HTTPException(404, "code not found")
+    _audit(
+        db, admin, "delete_bypass_code",
+        target_kind="bypass_code", target_id=bc.id,
+        detail=f"deleted code '{bc.code}'",
+    )
     db.delete(bc)
     db.commit()
     return Response(status_code=204)
