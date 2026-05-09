@@ -37,6 +37,7 @@ let allCarsFilter = "tracked";
 const driverMiniCharts = new Map();
 const carLapChartsBySlot = new Map();   // slot (1|2) -> Chart instance for that car's lap-time history
 const expandedDrivers = new Set();
+let _outlierLapIds = new Set();         // recomputed at the top of renderAll
 let editingDriverId = null;
 
 // ---------------------------------------------------------------------------
@@ -104,6 +105,42 @@ function isOurCar(vehicle) {
 // Backend auto-stops scrapers 12 hours after they were started — keep this
 // in sync with TRACKING_AUTO_STOP_HOURS in backend/app/scraper.py.
 const TRACKING_AUTO_STOP_HOURS = 12;
+
+// Pit-lap / outlier filter. For each vehicle, take the median lap time of its
+// non-deleted laps; any lap longer than median × event_.outlier_multiplier is
+// flagged as an outlier and excluded from chart datasets and lap-time stats.
+// Tables still show outlier rows but with a visual marker so the user knows
+// the data is there, just hidden from the charts.
+//
+// Returns a Set of lap.id values. Empty set when filter is disabled, when the
+// multiplier is missing, or when a vehicle has too few laps to be confident.
+const OUTLIER_MIN_LAPS = 5;
+
+function computeOutlierLapIds() {
+  const out = new Set();
+  const mult = event_ && Number(event_.outlier_multiplier);
+  if (!mult || mult <= 0 || !Number.isFinite(mult)) return out;
+  // Group active laps by vehicle.
+  const byVehicle = new Map();
+  for (const l of laps) {
+    if (l.is_deleted) continue;
+    if (!byVehicle.has(l.vehicle_number)) byVehicle.set(l.vehicle_number, []);
+    byVehicle.get(l.vehicle_number).push(l);
+  }
+  for (const [, vlaps] of byVehicle) {
+    if (vlaps.length < OUTLIER_MIN_LAPS) continue;
+    const sorted = vlaps.map((l) => l.lap_time_ms).slice().sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const median = sorted.length % 2
+      ? sorted[mid]
+      : (sorted[mid - 1] + sorted[mid]) / 2;
+    const threshold = median * mult;
+    for (const l of vlaps) {
+      if (l.lap_time_ms > threshold) out.add(l.id);
+    }
+  }
+  return out;
+}
 
 function fmtDurationShort(ms) {
   if (ms < 0) ms = 0;
@@ -438,8 +475,11 @@ function renderCarLapChartHTML(tc) {
 function drawCarLapChart(slot, tc) {
   const canvas = document.getElementById(`car-lap-chart-${slot}`);
   if (!canvas) return;
-  const carLaps = laps.filter((l) => l.vehicle_number === tc.vehicle_number && !l.is_deleted)
-                      .sort((a, b) => a.lap_number - b.lap_number);
+  // Filter to this car's non-deleted, non-outlier laps so a pit lap doesn't
+  // squash the rest of the y-axis to a flat line.
+  const carLaps = laps.filter((l) =>
+    l.vehicle_number === tc.vehicle_number && !l.is_deleted && !_outlierLapIds.has(l.id)
+  ).sort((a, b) => a.lap_number - b.lap_number);
   const points = carLaps.map((l) => ({ x: l.lap_number, y: l.lap_time_ms / 1000, _lap: l }));
   const fastThreshold = event_?.min_lap_warning_ms ?? FAST_LAP_THRESHOLD_MS;
 
@@ -542,11 +582,14 @@ function renderSlotLapsHTML(tc) {
     const stint = lap.tyre_stint || 1;
     const stintClass = `s${((stint - 1) % 5) + 1}`;
     const isFast = lap.lap_time_ms < fastThreshold;
+    const isOutlier = _outlierLapIds.has(lap.id);
     return `
-      <tr class="us ${isFast ? "fast" : ""}">
+      <tr class="us ${isFast ? "fast" : ""} ${isOutlier ? "outlier" : ""}">
         <td><span class="lap-color-chip" style="background:${chipColor}; border-color:${chipBorder}"></span></td>
         <td>${lap.lap_number}</td>
-        <td class="lap-time-cell">${fmtLapMs(lap.lap_time_ms)}</td>
+        <td class="lap-time-cell"${isOutlier ? ' title="Outlier — likely a pit lap. Excluded from charts and stats."' : ''}>
+          ${fmtLapMs(lap.lap_time_ms)}${isOutlier ? ' <span class="outlier-mark" aria-hidden="true">⊘</span>' : ''}
+        </td>
         <td><span class="stint-badge ${stintClass}" title="tyre stint">S${stint}</span></td>
         <td>${pickerHTML(lap, driver)}</td>
         <td>
@@ -640,7 +683,8 @@ function drawDriverMiniChart(driver) {
 
 function buildAllDriversDatasets() {
   return drivers.map((d) => {
-    const dlaps = lapsByDriverId(d.id);
+    // Drop outlier laps (pit laps etc.) so the y-axis isn't blown out.
+    const dlaps = lapsByDriverId(d.id).filter((l) => !_outlierLapIds.has(l.id));
     return {
       label: d.name,
       data: dlaps.map((l) => ({ x: l.lap_number, y: l.lap_time_ms / 1000, _lap: l })),
@@ -715,6 +759,7 @@ function buildAllCarsDatasets() {
   for (const l of laps) {
     if (l.completed_at == null) continue;
     if (!visible.has(l.vehicle_number)) continue;
+    if (_outlierLapIds.has(l.id)) continue;   // skip pit-lap outliers
     (byVehicle[l.vehicle_number] ||= []).push(l);
   }
   return Object.entries(byVehicle).map(([vehicle, vlaps]) => {
@@ -890,12 +935,15 @@ function renderAllLapsFeed() {
 
   tbody.innerHTML = rows.map((l) => {
     const isUs = tracked.has(l.vehicle_number);
+    const isOutlier = _outlierLapIds.has(l.id);
     return `
-      <tr class="${isUs ? "us" : ""}">
+      <tr class="${isUs ? "us" : ""} ${isOutlier ? "outlier" : ""}">
         <td>${fmtTimeOfDay(tsMs(l))}</td>
         <td><strong>#${escapeHtml(l.vehicle_number)}</strong></td>
         <td>${l.lap_number}</td>
-        <td class="lap-time-cell">${fmtLapMs(l.lap_time_ms)}</td>
+        <td class="lap-time-cell"${isOutlier ? ' title="Outlier — likely a pit lap. Excluded from charts and stats."' : ''}>
+          ${fmtLapMs(l.lap_time_ms)}${isOutlier ? ' <span class="outlier-mark" aria-hidden="true">⊘</span>' : ''}
+        </td>
         <td>${l.position ?? "—"}</td>
       </tr>`;
   }).join("");
@@ -960,6 +1008,9 @@ async function tick() {
 }
 
 function renderAll(leaderboardRows, opts = {}) {
+  // Recompute outlier set once per render so every chart and table sees the
+  // same view of "what's an outlier right now".
+  _outlierLapIds = computeOutlierLapIds();
   renderHeader();
   // Driver cards live inside renderCarColumns now — nothing to call here.
   renderAllDriversChart();
@@ -1436,6 +1487,8 @@ function openEventSettings() {
   $("#event-name-input").value = event_.name;
   $("#min-lap-input").value = fmtLapMs(event_.min_lap_warning_ms ?? FAST_LAP_THRESHOLD_MS);
   $("#min-lap-msg").textContent = "";
+  $("#outlier-input").value = (event_.outlier_multiplier ?? 2.5).toString();
+  $("#outlier-msg").textContent = "";
   $("#public-toggle").checked = !!event_.is_public;
   $("#public-msg").textContent = "";
   $("#event-settings-modal").style.display = "flex";
@@ -1538,6 +1591,28 @@ document.addEventListener("click", async (e) => {
       await loadAll();
       msg.style.color = "var(--accent-2)";
       msg.textContent = `Saved (${fmtLapMs(ms)})`;
+    } catch (err) {
+      msg.style.color = "var(--bad)";
+      msg.textContent = err.message;
+    }
+    return;
+  }
+  if (e.target.id === "save-outlier") {
+    const msg = $("#outlier-msg");
+    const raw = $("#outlier-input").value.trim();
+    const v = parseFloat(raw);
+    if (raw === "" || Number.isNaN(v) || v < 0 || v > 100) {
+      msg.style.color = "var(--bad)";
+      msg.textContent = "Enter a number between 0 (off) and 100.";
+      return;
+    }
+    msg.style.color = "var(--muted)";
+    msg.textContent = "Saving…";
+    try {
+      await API.updateEvent(EVENT_ID, { outlier_multiplier: v });
+      await loadAll();
+      msg.style.color = "var(--accent-2)";
+      msg.textContent = v === 0 ? "Filter off." : `Saved (${v}× median).`;
     } catch (err) {
       msg.style.color = "var(--bad)";
       msg.textContent = err.message;

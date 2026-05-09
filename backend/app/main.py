@@ -104,6 +104,9 @@ async def lifespan(app: FastAPI):
     # have a User row — that closes the "claim an unregistered admin email
     # by signing up first" gap.
     ensure_column("users", "is_admin", "BOOLEAN NOT NULL DEFAULT FALSE")
+    # Outlier filter for chart axis stability — keeps a pit lap from blowing
+    # out the y-axis. 0 = disabled; default 2.5× the per-vehicle median.
+    ensure_column("events", "outlier_multiplier", "REAL NOT NULL DEFAULT 2.5")
     _admin_emails_raw = os.environ.get("ADMIN_EMAILS", "")
     _admin_emails = {e.strip().lower() for e in _admin_emails_raw.split(",") if e.strip()}
     if _admin_emails:
@@ -721,6 +724,9 @@ def update_event(
     if "min_lap_warning_ms" in data and data["min_lap_warning_ms"] is not None:
         if data["min_lap_warning_ms"] < 1000 or data["min_lap_warning_ms"] > 600_000:
             raise HTTPException(400, "min_lap_warning_ms must be between 1000 (1s) and 600000 (10min)")
+    if "outlier_multiplier" in data and data["outlier_multiplier"] is not None:
+        if data["outlier_multiplier"] < 0 or data["outlier_multiplier"] > 100:
+            raise HTTPException(400, "outlier_multiplier must be between 0 (disabled) and 100")
     for field, value in data.items():
         setattr(ev, field, value)
     db.commit()
@@ -1862,7 +1868,7 @@ def leaderboard(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    get_user_event_read(event_id, user, db)
+    ev = get_user_event_read(event_id, user, db)
     laps = db.execute(
         select(Lap)
         .where(Lap.event_id == event_id, Lap.is_deleted.is_(False))
@@ -1873,18 +1879,38 @@ def leaderboard(
     for l in laps:
         by_vehicle.setdefault(l.vehicle_number, []).append(l)
 
+    # Outlier filter for avg_lap_ms: same logic as the frontend chart filter
+    # — drop laps slower than (per-vehicle median × multiplier) before
+    # averaging, so a single pit lap doesn't visibly skew the table.
+    # laps_completed and best_lap_ms still count every (non-deleted) lap.
+    mult = ev.outlier_multiplier or 0.0
+
+    def _non_outlier_times(vlaps: list[Lap]) -> list[int]:
+        times = [l.lap_time_ms for l in vlaps]
+        if mult <= 0 or len(vlaps) < 5:
+            return times
+        sorted_t = sorted(times)
+        median = (
+            sorted_t[len(sorted_t) // 2]
+            if len(sorted_t) % 2
+            else (sorted_t[len(sorted_t) // 2 - 1] + sorted_t[len(sorted_t) // 2]) / 2
+        )
+        threshold = median * mult
+        return [t for t in times if t <= threshold]
+
     rows: list[LeaderboardRow] = []
     for vehicle, vlaps in by_vehicle.items():
         if not vlaps:
             continue
-        times = [l.lap_time_ms for l in vlaps]
+        all_times = [l.lap_time_ms for l in vlaps]
+        avg_times = _non_outlier_times(vlaps)
         last_lap = max(vlaps, key=lambda l: l.lap_number)
         rows.append(LeaderboardRow(
             vehicle_number=vehicle,
             laps_completed=len(vlaps),
-            best_lap_ms=min(times) if times else None,
+            best_lap_ms=min(all_times) if all_times else None,
             last_lap_ms=last_lap.lap_time_ms,
-            avg_lap_ms=int(sum(times) / len(times)) if times else None,
+            avg_lap_ms=int(sum(avg_times) / len(avg_times)) if avg_times else None,
             position=last_lap.position,
         ))
     rows.sort(key=lambda r: (-r.laps_completed, r.best_lap_ms or 10**9))

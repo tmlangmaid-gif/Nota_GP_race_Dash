@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from sqlalchemy import (
-    Integer, String, DateTime, ForeignKey, Boolean, UniqueConstraint, Index
+    Integer, Float, String, DateTime, ForeignKey, Boolean, UniqueConstraint, Index
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
@@ -81,6 +81,11 @@ class Event(Base):
     # Laps faster than this are flagged with a red tint as suspicious / record-pace.
     # Default 1:12.000 = 72 000 ms. Adjustable per event via the settings modal.
     min_lap_warning_ms: Mapped[int] = mapped_column(Integer, default=72_000, nullable=False)
+    # Charts ignore laps slower than (per-vehicle median × this multiplier) so
+    # pit laps don't blow out the y-axis. 0 disables the filter; default 2.5x.
+    # Tables still show outlier rows but mark them visually so the user knows
+    # they exist and weren't quietly dropped.
+    outlier_multiplier: Mapped[float] = mapped_column(Float, default=2.5, nullable=False)
     # When true, any logged-in user can read this event (read-only). Owner still
     # has full control and is the only one who can edit. Defaults to private.
     is_public: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

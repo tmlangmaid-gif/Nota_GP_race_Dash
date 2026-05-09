@@ -162,6 +162,21 @@
         </div>
       </div>
 
+      <div class="panel" style="background:var(--panel-2)">
+        <h2>Outlier filter (pit laps)</h2>
+        <div class="muted" style="font-size:12px; margin-bottom:6px">
+          Charts hide laps slower than <strong>(median × this multiplier)</strong>
+          per vehicle, so a pit-in lap doesn't flatten the rest of the y-axis.
+          Default <strong>2.5</strong>. Set to <strong>0</strong> to disable.
+          Tables still show outliers with a <code>⊘</code> mark so you can see the data exists.
+        </div>
+        <div class="row">
+          <input type="number" id="outlier-input" min="0" max="100" step="0.1" placeholder="2.5" style="flex:0 0 120px" />
+          <button id="save-outlier" class="primary">Save</button>
+          <span id="outlier-msg" class="muted" style="font-size:12px;"></span>
+        </div>
+      </div>
+
       <div class="panel" style="background:var(--panel-2)" id="members-panel">
         <h2>Shared with</h2>
         <div class="muted" style="font-size:12px; margin-bottom:6px;">

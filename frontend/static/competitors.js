@@ -160,7 +160,18 @@ function renderCars() {
 function drawCarChart(car) {
   const canvas = document.getElementById(`car-chart-${car.vehicle}`);
   if (!canvas) return;
-  const data = car.laps.map((l) => ({ x: l.lap_number, y: l.lap_time_ms / 1000, _lap: l }));
+  // Drop outlier laps (likely pit laps) so the y-axis isn't distorted.
+  // Keep filter behaviour identical to the dashboard view.
+  const mult = event_ && Number(event_.outlier_multiplier);
+  let plotted = car.laps;
+  if (mult && mult > 0 && car.laps.length >= 5) {
+    const sorted = car.laps.map((l) => l.lap_time_ms).slice().sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    const threshold = median * mult;
+    plotted = car.laps.filter((l) => l.lap_time_ms <= threshold);
+  }
+  const data = plotted.map((l) => ({ x: l.lap_number, y: l.lap_time_ms / 1000, _lap: l }));
   const colour = car.isTracked ? "#ffd24a" : vehicleColor(car.vehicle);
 
   const chart = new Chart(canvas.getContext("2d"), {

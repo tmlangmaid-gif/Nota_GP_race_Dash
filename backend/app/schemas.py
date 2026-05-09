@@ -98,6 +98,7 @@ class EventUpdate(BaseModel):
     our_vehicle_number: str | None = None
     min_lap_warning_ms: int | None = None
     is_public: bool | None = None
+    outlier_multiplier: float | None = None
 
 
 class EventOut(BaseModel):
@@ -113,6 +114,7 @@ class EventOut(BaseModel):
     min_lap_warning_ms: int = 72_000
     is_public: bool = False
     is_paid: bool = False
+    outlier_multiplier: float = 2.5
     role: str | None = None   # set per-request by the endpoint: 'owner' | 'write' | 'read'
 
     @field_validator("is_paid", mode="after")
