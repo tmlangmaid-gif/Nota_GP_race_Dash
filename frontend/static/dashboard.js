@@ -974,7 +974,11 @@ function renderAll(leaderboardRows, opts = {}) {
   const editingNote = ae?.classList?.contains("lap-note-input");
   const editingCarName = ae?.classList?.contains("tracked-name");
   const editingNewDriver = ae?.classList?.contains("new-car-driver-input");
-  if (!opts.skipCarColumnsIfEditingNote || (!editingNote && !editingCarName && !editingNewDriver)) {
+  // If the user has the per-lap driver picker open, the next tick's re-render
+  // would destroy the dropdown DOM and snap it shut. Hold off until they
+  // close it (by picking, by clicking outside, or by reopening another).
+  const driverPickerOpen = !!document.querySelector(".driver-picker.open");
+  if (!opts.skipCarColumnsIfEditingNote || (!editingNote && !editingCarName && !editingNewDriver && !driverPickerOpen)) {
     renderCarColumns();
   }
   renderAllLapsFeed();
