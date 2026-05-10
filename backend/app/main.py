@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 import bcrypt
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
@@ -376,7 +376,11 @@ def health():
 
 @app.post("/api/auth/signup", response_model=AuthResponse)
 @limiter.limit("10/hour")
-def signup(request: Request, payload: SignupRequest, db: Session = Depends(get_db)):
+def signup(request: Request, payload: SignupRequest = Body(...), db: Session = Depends(get_db)):
+    # `Body(...)` is needed on every @limiter.limit'd endpoint: slowapi wraps
+    # the function and FastAPI loses the body-vs-query inference for Pydantic
+    # models on the wrapped signature, so the body lands as a query param and
+    # the response is 422 "Field required".
     email = normalise_email(payload.email)
     if "@" not in email or "." not in email.split("@")[-1]:
         raise HTTPException(400, "invalid email address")
@@ -430,7 +434,7 @@ def signup(request: Request, payload: SignupRequest, db: Session = Depends(get_d
 
 @app.post("/api/auth/login", response_model=AuthResponse)
 @limiter.limit("10/minute")
-def login(request: Request, payload: LoginRequest, db: Session = Depends(get_db)):
+def login(request: Request, payload: LoginRequest = Body(...), db: Session = Depends(get_db)):
     email = normalise_email(payload.email)
     user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
     if not user or not verify_password(payload.password, user.password_hash):
@@ -549,7 +553,7 @@ from sqlalchemy import delete as sa_delete
 
 @app.post("/api/auth/request_password_reset", status_code=204)
 @limiter.limit("5/hour")
-def request_password_reset(request: Request, payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
+def request_password_reset(request: Request, payload: ForgotPasswordRequest = Body(...), db: Session = Depends(get_db)):
     """Email the user a one-time reset link if their email is registered.
     We always return 204 so callers can't probe which emails have accounts."""
     email = normalise_email(payload.email)
@@ -576,7 +580,7 @@ def request_password_reset(request: Request, payload: ForgotPasswordRequest, db:
 
 @app.post("/api/auth/reset_password")
 @limiter.limit("10/hour")
-def reset_password(request: Request, payload: ResetPasswordRequest, db: Session = Depends(get_db)):
+def reset_password(request: Request, payload: ResetPasswordRequest = Body(...), db: Session = Depends(get_db)):
     """Validate a reset token, set the new password, mark the token used,
     and invalidate all of this user's existing auth sessions."""
     pr = db.get(PasswordResetToken, payload.token)
@@ -1030,7 +1034,7 @@ class ApplyCodeRequest(BaseModel):
 def apply_bypass_code(
     request: Request,
     event_id: int,
-    payload: ApplyCodeRequest,
+    payload: ApplyCodeRequest = Body(...),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
