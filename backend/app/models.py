@@ -209,8 +209,11 @@ class Driver(Base):
 
     event: Mapped[Event] = relationship(back_populates="drivers")
 
+    # Same driver name is allowed on different cars within an event (e.g.
+    # "Alice" rotates between car #23 and car #44 in an enduro). Only
+    # disallow exact (event, name, vehicle) duplicates.
     __table_args__ = (
-        UniqueConstraint("event_id", "name", name="uq_driver_event_name"),
+        UniqueConstraint("event_id", "name", "vehicle_number", name="uq_driver_event_name_vehicle"),
     )
 
 

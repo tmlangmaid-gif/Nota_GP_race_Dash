@@ -18,6 +18,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .db import Base, engine, ensure_column, get_db, SessionLocal
+from sqlalchemy.exc import IntegrityError
 from .email_sender import send_event_invite_email, send_password_reset_email
 from .natsoft_browser import browser as natsoft_browser
 from .models import AdminAuditLog, AuthToken, BypassCode, Driver, Event, EventInvite, EventMember, Lap, PasswordResetToken, ScraperLog, TrackedCar, User, UserDriver
@@ -59,6 +60,28 @@ async def lifespan(app: FastAPI):
     ensure_column("tracked_cars", "description", "VARCHAR(120)")
     ensure_column("tracked_cars", "name", "VARCHAR(80)")
     ensure_column("drivers", "vehicle_number", "VARCHAR(20)")
+
+    # Drivers used to be unique by (event_id, name) — but the app supports the
+    # SAME name on different cars within an event (Alice rotates between #23
+    # and #44 in an enduro). Tighten the constraint to include vehicle_number
+    # so that scenario doesn't 500 with a UniqueViolation. Idempotent: only
+    # runs if the old constraint exists, only adds the new one if it doesn't.
+    with engine.begin() as _conn:
+        from sqlalchemy import text as _sql_text
+        _has_old = _conn.execute(_sql_text(
+            "SELECT 1 FROM pg_constraint WHERE conname = 'uq_driver_event_name'"
+        )).scalar() if engine.dialect.name == "postgresql" else None
+        _has_new = _conn.execute(_sql_text(
+            "SELECT 1 FROM pg_constraint WHERE conname = 'uq_driver_event_name_vehicle'"
+        )).scalar() if engine.dialect.name == "postgresql" else None
+        if engine.dialect.name == "postgresql":
+            if _has_old:
+                _conn.exec_driver_sql('ALTER TABLE "drivers" DROP CONSTRAINT "uq_driver_event_name"')
+            if not _has_new:
+                _conn.exec_driver_sql(
+                    'ALTER TABLE "drivers" ADD CONSTRAINT "uq_driver_event_name_vehicle" '
+                    'UNIQUE (event_id, name, vehicle_number)'
+                )
     ensure_column("events", "user_id", "INTEGER")
     ensure_column("events", "min_lap_warning_ms", "INTEGER NOT NULL DEFAULT 72000")
     # FALSE (not 0) — Postgres requires a boolean literal here; SQLite accepts both.
@@ -1462,7 +1485,13 @@ def add_driver(
     )
     db.add(d)
     _upsert_user_driver(db, user.id, payload.name, inherited_color)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Defensive: surface a clean 409 instead of letting the framework
+        # 500 if a unique constraint somehow bites (e.g. concurrent insert).
+        db.rollback()
+        raise HTTPException(409, "a driver with that name and car already exists")
     db.refresh(d)
     return d
 
