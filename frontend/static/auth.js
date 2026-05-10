@@ -20,7 +20,14 @@ window.Auth = (function () {
       let msg = res.statusText;
       try {
         const data = await res.json();
-        msg = data.detail || JSON.stringify(data);
+        // FastAPI wraps Pydantic validation errors as detail = [{loc, msg, type, ...}, ...]
+        // and HTTPException(detail=str) as detail = "string". Render both
+        // sensibly instead of letting Array.toString produce "[object Object]".
+        const d = data && data.detail;
+        if (typeof d === "string") msg = d;
+        else if (Array.isArray(d)) msg = d.map((e) => e && e.msg ? e.msg : JSON.stringify(e)).join("; ");
+        else if (d) msg = JSON.stringify(d);
+        else msg = JSON.stringify(data);
       } catch (_) { /* leave msg */ }
       const err = new Error(msg);
       err.status = res.status;

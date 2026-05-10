@@ -19,8 +19,20 @@ async function api(path, opts = {}) {
     throw err;
   }
   if (!res.ok) {
-    let text;
-    try { text = JSON.stringify(await res.json()); } catch (_) { text = await res.text().catch(() => res.statusText); }
+    // Surface the human-readable detail when we can. FastAPI returns either
+    // detail=string (HTTPException) or detail=[{loc,msg,type},...] (Pydantic
+    // validation). Without this, Array.toString gives "[object Object]".
+    let text = res.statusText;
+    try {
+      const data = await res.json();
+      const d = data && data.detail;
+      if (typeof d === "string") text = d;
+      else if (Array.isArray(d)) text = d.map((e) => e && e.msg ? e.msg : JSON.stringify(e)).join("; ");
+      else if (d) text = JSON.stringify(d);
+      else text = JSON.stringify(data);
+    } catch (_) {
+      try { text = await res.text(); } catch (__) { /* leave statusText */ }
+    }
     const err = new Error(`${res.status} ${text}`);
     err.status = res.status;
     throw err;

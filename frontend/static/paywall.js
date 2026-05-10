@@ -128,7 +128,23 @@
       }, 600);
     } catch (err) {
       msg.style.color = "var(--bad, #e74c3c)";
-      msg.textContent = "That code isn't valid.";
+      // Distinguish the real failure modes so we can see what's actually
+      // wrong rather than blaming every error on the code itself.
+      if (err.status === 400) {
+        msg.textContent = "That code isn't valid.";
+      } else if (err.status === 401) {
+        msg.textContent = "You're signed out — log in and try again.";
+      } else if (err.status === 403) {
+        msg.textContent = "Only the event owner can redeem a code on their own event.";
+      } else if (err.status === 404) {
+        msg.textContent = "Event not found (or you don't have access).";
+      } else if (err.status === 409) {
+        msg.textContent = "This event is already paid for.";
+      } else if (err.status === 429) {
+        msg.textContent = "Too many tries — wait a minute and try again.";
+      } else {
+        msg.textContent = `Couldn't apply code (${err.status || "?"}): ${err.message || err}`;
+      }
     } finally {
       btn.disabled = false;
     }
