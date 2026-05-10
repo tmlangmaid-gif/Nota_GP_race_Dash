@@ -265,6 +265,14 @@ class BypassCodeCreate(BaseModel):
     description: str | None = None
 
 
+class ApplyCodeRequest(BaseModel):
+    """Body of POST /api/events/{id}/apply_code — a free-unlock code the
+    event owner is redeeming. Must live here (not inline in main.py) so
+    Pydantic's TypeAdapter can resolve it under `from __future__ import
+    annotations` once slowapi wraps the endpoint."""
+    code: str
+
+
 class AdminAuditLogOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int

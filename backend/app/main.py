@@ -28,7 +28,7 @@ from .schemas import (
     AuthResponse,
     DriverCreate, DriverOut, DriverUpdate,
     AdminAuditLogOut, AdminEventOut, AdminUserOut,
-    BypassCodeCreate, BypassCodeOut,
+    ApplyCodeRequest, BypassCodeCreate, BypassCodeOut,
     DeleteMeRequest,
     EventCreate, EventOut, EventUpdate,
     EventMemberCreate, EventMemberOut, EventMembershipOut, EventMemberUpdate,
@@ -1023,10 +1023,6 @@ def create_checkout(
         logging.getLogger("paywall").exception("create_checkout failed")
         raise HTTPException(503, f"couldn't create Stripe checkout: {e}")
     return CheckoutOut(url=url)
-
-
-class ApplyCodeRequest(BaseModel):
-    code: str
 
 
 @app.post("/api/events/{event_id}/apply_code", response_model=EventOut)
