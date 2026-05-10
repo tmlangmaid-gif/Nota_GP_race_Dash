@@ -1025,11 +1025,17 @@ function renderAll(leaderboardRows, opts = {}) {
   const editingNote = ae?.classList?.contains("lap-note-input");
   const editingCarName = ae?.classList?.contains("tracked-name");
   const editingNewDriver = ae?.classList?.contains("new-car-driver-input");
+  // Native <select> elements don't expose "open" state, but when their
+  // dropdown is showing they're the activeElement. Skip the re-render so
+  // we don't destroy the picker mid-click on the "pick a car" or
+  // "current driver" dropdowns inside a slot card.
+  const pickingVehicle = ae?.classList?.contains("tracked-vehicle");
+  const pickingDriver = ae?.classList?.contains("tracked-driver");
   // If the user has the per-lap driver picker open, the next tick's re-render
   // would destroy the dropdown DOM and snap it shut. Hold off until they
   // close it (by picking, by clicking outside, or by reopening another).
   const driverPickerOpen = !!document.querySelector(".driver-picker.open");
-  if (!opts.skipCarColumnsIfEditingNote || (!editingNote && !editingCarName && !editingNewDriver && !driverPickerOpen)) {
+  if (!opts.skipCarColumnsIfEditingNote || (!editingNote && !editingCarName && !editingNewDriver && !pickingVehicle && !pickingDriver && !driverPickerOpen)) {
     renderCarColumns();
   }
   renderAllLapsFeed();
