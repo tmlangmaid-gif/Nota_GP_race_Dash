@@ -1,5 +1,17 @@
 [
   {
+    "ts": "2026-05-12T02:56:52.613Z",
+    "type": "smoke-test-final",
+    "message": "All-3 final verify",
+    "source": null,
+    "line": null,
+    "col": null,
+    "stack": "smoke test",
+    "url": "verify",
+    "userAgent": "curl/8.18.0",
+    "extra": null
+  },
+  {
     "ts": "2026-05-12T02:49:44.927Z",
     "type": "debug",
     "message": "diagnostic v3",
