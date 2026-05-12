@@ -1,5 +1,17 @@
 [
   {
+    "ts": "2026-05-12T03:01:43.992Z",
+    "type": "unhandledrejection",
+    "message": "Failed to fetch",
+    "source": null,
+    "line": null,
+    "col": null,
+    "stack": "TypeError: Failed to fetch\n    at rawFetch (https://www.speeddemondash.com/static/auth.js:14:23)\n    at Object.me (https://www.speeddemondash.com/static/auth.js:70:14)\n    at Object.requireAuth (https://www.speeddemondash.com/static/auth.js:92:33)\n    at https://www.speeddemondash.com/static/app.js:186:28\n    at https://www.speeddemondash.com/static/app.js:189:3",
+    "url": "https://www.speeddemondash.com/",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "extra": null
+  },
+  {
     "ts": "2026-05-12T02:56:52.613Z",
     "type": "smoke-test-final",
     "message": "All-3 final verify",
