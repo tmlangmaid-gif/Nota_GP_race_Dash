@@ -40,11 +40,6 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'POST only' });
   }
 
-  // TEMP DIAGNOSTIC: ?debug=1 returns JSON with env presence + GitHub
-  // probe status (no secret values) so we can verify a Vercel deployment
-  // has functional env vars. Remove this block once setup is verified.
-  const debug = req.url && req.url.indexOf('debug=1') >= 0;
-
   // Vercel auto-parses application/json; sendBeacon may deliver as Blob
   let body = req.body;
   if (typeof body === 'string') {
@@ -63,12 +58,9 @@ export default async function handler(req, res) {
   const repo  = process.env.GH_REPO;
   const token = process.env.GH_TOKEN;
   if (!repo || !token) {
+    // Server isn't configured — accept silently so we don't loop the client.
+    // Errors still surface in Vercel's function logs via console.error.
     console.error('log-error: GH_TOKEN/GH_REPO missing; dropping batch', cleaned);
-    if (debug) return res.status(200).json({
-      env: { GH_REPO_present: !!repo, GH_TOKEN_present: !!token,
-             GH_TOKEN_length: (token || '').length },
-      result: 'env-missing'
-    });
     return res.status(204).end();
   }
 
@@ -84,11 +76,8 @@ export default async function handler(req, res) {
   // GET existing
   let existingSha = null;
   let existingErrors = [];
-  let probeStatus = null;
-  let probeBody = null;
   try {
     const probe = await fetch(apiBase + '?ref=main', { headers: ghHeaders });
-    probeStatus = probe.status;
     if (probe.status === 200) {
       const j = await probe.json();
       existingSha = j.sha;
@@ -98,13 +87,10 @@ export default async function handler(req, res) {
         if (Array.isArray(parsed)) existingErrors = parsed;
       } catch { /* will overwrite */ }
     } else if (probe.status !== 404) {
-      probeBody = (await probe.text()).slice(0, 500);
-      console.error('log-error: probe non-OK', probe.status, probeBody);
+      console.error('log-error: probe non-OK', probe.status, await probe.text());
     }
   } catch (e) {
-    probeStatus = 'fetch-error';
-    probeBody = String(e).slice(0, 500);
-    console.error('log-error: probe error', probeBody);
+    console.error('log-error: probe error', String(e));
   }
 
   // Newest first; cap to MAX_KEEP
@@ -120,37 +106,18 @@ export default async function handler(req, res) {
   };
   if (existingSha) putBody.sha = existingSha;
 
-  let putStatus = null;
-  let putErrBody = null;
   try {
     const putRes = await fetch(apiBase, {
       method:  'PUT',
       headers: { ...ghHeaders, 'Content-Type': 'application/json' },
       body:    JSON.stringify(putBody)
     });
-    putStatus = putRes.status;
     if (!putRes.ok) {
-      putErrBody = (await putRes.text()).slice(0, 500);
-      console.error('log-error: PUT failed', putRes.status, putErrBody);
+      console.error('log-error: PUT failed', putRes.status, await putRes.text());
     }
   } catch (e) {
-    putStatus = 'fetch-error';
-    putErrBody = String(e).slice(0, 500);
-    console.error('log-error: PUT error', putErrBody);
+    console.error('log-error: PUT error', String(e));
   }
-
-  if (debug) return res.status(200).json({
-    env: {
-      GH_REPO: repo,
-      GH_TOKEN_present: true,
-      GH_TOKEN_length: token.length,
-      GH_TOKEN_prefix: token.slice(0, 11)
-    },
-    probe_status: probeStatus,
-    probe_body: probeBody,
-    put_status: putStatus,
-    put_body: putErrBody
-  });
 
   // Always 204 — never let the client retry. Worst case we lose the batch.
   return res.status(204).end();
