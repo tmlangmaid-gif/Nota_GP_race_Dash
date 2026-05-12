@@ -121,7 +121,7 @@ export default async function handler(req, res) {
   if (existingSha) putBody.sha = existingSha;
 
   let putStatus = null;
-  let putBody = null;
+  let putErrBody = null;
   try {
     const putRes = await fetch(apiBase, {
       method:  'PUT',
@@ -130,13 +130,13 @@ export default async function handler(req, res) {
     });
     putStatus = putRes.status;
     if (!putRes.ok) {
-      putBody = (await putRes.text()).slice(0, 500);
-      console.error('log-error: PUT failed', putRes.status, putBody);
+      putErrBody = (await putRes.text()).slice(0, 500);
+      console.error('log-error: PUT failed', putRes.status, putErrBody);
     }
   } catch (e) {
     putStatus = 'fetch-error';
-    putBody = String(e).slice(0, 500);
-    console.error('log-error: PUT error', putBody);
+    putErrBody = String(e).slice(0, 500);
+    console.error('log-error: PUT error', putErrBody);
   }
 
   if (debug) return res.status(200).json({
@@ -149,7 +149,7 @@ export default async function handler(req, res) {
     probe_status: probeStatus,
     probe_body: probeBody,
     put_status: putStatus,
-    put_body: putBody
+    put_body: putErrBody
   });
 
   // Always 204 — never let the client retry. Worst case we lose the batch.
