@@ -1,5 +1,17 @@
 [
   {
+    "ts": "2026-05-12T07:44:15.575Z",
+    "type": "window.onerror",
+    "message": "Script error.",
+    "source": null,
+    "line": 0,
+    "col": 0,
+    "stack": null,
+    "url": "https://www.speeddemondash.com/dashboard?event=12",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "extra": null
+  },
+  {
     "ts": "2026-05-12T03:09:26.568Z",
     "type": "unhandledrejection",
     "message": "Failed to fetch",
